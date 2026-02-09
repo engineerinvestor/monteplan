@@ -1,0 +1,37 @@
+{
+  "plan": {
+    "current_age": 30,
+    "retirement_age": 65,
+    "end_age": 95,
+    "accounts": [
+      {"account_type": "taxable", "balance": 50000, "annual_contribution": 6000},
+      {"account_type": "traditional", "balance": 100000, "annual_contribution": 20000},
+      {"account_type": "roth", "balance": 30000, "annual_contribution": 7000}
+    ],
+    "monthly_income": 8000,
+    "monthly_spending": 5000,
+    "income_end_age": 65
+  },
+  "market": {
+    "assets": [
+      {"name": "US Stocks", "weight": 0.7},
+      {"name": "US Bonds", "weight": 0.3}
+    ],
+    "expected_annual_returns": [0.07, 0.03],
+    "annual_volatilities": [0.16, 0.06],
+    "correlation_matrix": [[1.0, 0.0], [0.0, 1.0]],
+    "inflation_mean": 0.03,
+    "inflation_vol": 0.01
+  },
+  "policies": {
+    "spending": {"policy_type": "constant_real", "withdrawal_rate": 0.04},
+    "rebalancing_months": [1, 7],
+    "withdrawal_order": ["taxable", "traditional", "roth"],
+    "tax_rate": 0.22
+  },
+  "simulation": {
+    "n_paths": 5000,
+    "seed": 42,
+    "store_paths": false
+  }
+}

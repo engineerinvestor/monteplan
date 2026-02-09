@@ -1,0 +1,70 @@
+"""Tests for multivariate normal return model."""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from monteplan.config.schema import AssetClass, MarketAssumptions
+from monteplan.models.returns.mvn import MultivariateNormalReturns
+
+
+@pytest.fixture
+def market() -> MarketAssumptions:
+    return MarketAssumptions(
+        assets=[
+            AssetClass(name="Stocks", weight=0.6),
+            AssetClass(name="Bonds", weight=0.4),
+        ],
+        expected_annual_returns=[0.08, 0.03],
+        annual_volatilities=[0.16, 0.05],
+        correlation_matrix=[[1.0, 0.2], [0.2, 1.0]],
+    )
+
+
+class TestMVN:
+    def test_output_shape(self, market: MarketAssumptions, rng) -> None:  # type: ignore[no-untyped-def]
+        model = MultivariateNormalReturns(market)
+        result = model.sample(100, 12, rng)
+        assert result.shape == (100, 12, 2)
+
+    def test_sample_means_close_to_expected(self, market: MarketAssumptions) -> None:
+        """With 100k samples, means should be within 1% of expected."""
+        from numpy.random import PCG64DXSM, Generator
+
+        rng = Generator(PCG64DXSM(123))
+        model = MultivariateNormalReturns(market)
+        # 100k paths, 1 step
+        result = model.sample(100_000, 1, rng)
+        sample_means = result[:, 0, :].mean(axis=0)
+        expected_monthly = np.array([0.08, 0.03]) / 12.0
+        np.testing.assert_allclose(sample_means, expected_monthly, atol=0.001)
+
+    def test_sample_vols_close_to_expected(self, market: MarketAssumptions) -> None:
+        """With 100k samples, vols should be within 2% of expected."""
+        from numpy.random import PCG64DXSM, Generator
+
+        rng = Generator(PCG64DXSM(456))
+        model = MultivariateNormalReturns(market)
+        result = model.sample(100_000, 1, rng)
+        sample_stds = result[:, 0, :].std(axis=0)
+        expected_monthly_vols = np.array([0.16, 0.05]) / np.sqrt(12.0)
+        np.testing.assert_allclose(sample_stds, expected_monthly_vols, rtol=0.02)
+
+    def test_correlation_close_to_expected(self, market: MarketAssumptions) -> None:
+        """With 100k samples, correlation should be within 0.05."""
+        from numpy.random import PCG64DXSM, Generator
+
+        rng = Generator(PCG64DXSM(789))
+        model = MultivariateNormalReturns(market)
+        result = model.sample(100_000, 1, rng)
+        sample_corr = np.corrcoef(result[:, 0, 0], result[:, 0, 1])[0, 1]
+        assert abs(sample_corr - 0.2) < 0.05
+
+    def test_deterministic_with_same_seed(self, market: MarketAssumptions) -> None:
+        from numpy.random import PCG64DXSM, Generator
+
+        model = MultivariateNormalReturns(market)
+        r1 = model.sample(10, 5, Generator(PCG64DXSM(42)))
+        r2 = model.sample(10, 5, Generator(PCG64DXSM(42)))
+        np.testing.assert_array_equal(r1, r2)
