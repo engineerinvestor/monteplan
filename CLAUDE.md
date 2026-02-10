@@ -88,3 +88,4 @@ Multi-page Streamlit app with pages numbered for nav ordering (1_Plan_Setup.py t
 
 - **Remote:** https://github.com/engineerinvestor/monteplan (private)
 - **Commit attribution:** Name: Engineer Investor, Email: egr.investor@gmail.com
+- **GitHub CLI:** Multiple `gh` accounts are configured. Before pushing, ensure the active account is `engineerinvestor`: `gh auth switch --user engineerinvestor`
