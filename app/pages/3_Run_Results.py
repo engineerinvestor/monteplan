@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
-
+import numpy as np
 import streamlit as st
 
+from monteplan.analytics.metrics import max_drawdown_distribution, ruin_by_age
 from monteplan.config.defaults import (
     default_market,
     default_plan,
@@ -18,11 +18,15 @@ from monteplan.config.schema import (
     PolicyBundle,
     SimulationConfig,
 )
-from monteplan.analytics.metrics import max_drawdown_distribution, ruin_by_age, spending_volatility
-from monteplan.core.engine import SimulationResult, simulate
+from monteplan.core.engine import simulate
 from monteplan.io.serialize import dump_config, dump_results_summary, dump_time_series_csv
 
 st.set_page_config(page_title="Run & Results — MontePlan", layout="wide")
+
+from app.components.theme import register_theme
+
+register_theme()
+
 st.title("Run & Results")
 
 
@@ -52,25 +56,56 @@ def run_simulation(
     # Compute additional metrics from raw paths
     retirement_step = (plan.retirement_age - plan.current_age) * 12
     drawdown_stats = {}
-    spend_vol_stats = {}
     ruin_ages: list[float] = []
     ruin_fracs: list[float] = []
+    terminal_values: list[float] = []
+    sample_paths: list[list[float]] = []
+    sample_labels: list[str] = []
 
     if result.all_paths is not None:
         drawdown_stats = max_drawdown_distribution(result.all_paths)
-        spend_vol_stats = spending_volatility(
-            # Reconstruct spending from the spending_time_series percentiles is not exact;
-            # we need the raw spending. Since we have spending_ts but not raw paths,
-            # compute from wealth-based proxy. For now, use spending_ts for vol.
-            # Actually, we need to pass spending_history through. Let's use the ts.
-            result.all_paths[:, :0],  # placeholder
-            retirement_step,
-        )
         ages_arr, fracs_arr = ruin_by_age(
-            result.all_paths, retirement_step, plan.current_age,
+            result.all_paths,
+            retirement_step,
+            plan.current_age,
         )
         ruin_ages = ages_arr.tolist()
         ruin_fracs = fracs_arr.tolist()
+
+        # Terminal wealth values for histogram
+        terminal_values = result.all_paths[:, -1].tolist()
+
+        # Subsample paths for spaghetti chart
+        n_paths = result.all_paths.shape[0]
+        n_points = result.all_paths.shape[1]
+        # Subsample every 12 steps (monthly -> annual) for display efficiency
+        step = max(1, n_points // min(n_points, 780))
+        indices = np.arange(0, n_points, step)
+
+        terminals = result.all_paths[:, -1]
+        best_idx = int(np.argmax(terminals))
+        worst_idx = int(np.argmin(terminals))
+        median_target = np.median(terminals)
+        median_idx = int(np.argmin(np.abs(terminals - median_target)))
+
+        # 20 deterministic random paths
+        rng = np.random.default_rng(42)
+        n_random = min(20, n_paths - 3)
+        exclude = {best_idx, worst_idx, median_idx}
+        available = [i for i in range(n_paths) if i not in exclude]
+        random_indices = rng.choice(available, size=min(n_random, len(available)), replace=False)
+
+        for ri in random_indices:
+            sample_paths.append(result.all_paths[ri, indices].tolist())
+            sample_labels.append("random")
+
+        # Special paths last so they render on top
+        sample_paths.append(result.all_paths[median_idx, indices].tolist())
+        sample_labels.append("median")
+        sample_paths.append(result.all_paths[best_idx, indices].tolist())
+        sample_labels.append("best")
+        sample_paths.append(result.all_paths[worst_idx, indices].tolist())
+        sample_labels.append("worst")
 
     # Convert to serializable dict for caching
     return {
@@ -81,6 +116,9 @@ def run_simulation(
         "max_drawdown": drawdown_stats,
         "ruin_ages": ruin_ages,
         "ruin_fractions": ruin_fracs,
+        "terminal_values": terminal_values,
+        "sample_paths": sample_paths,
+        "sample_labels": sample_labels,
         "n_paths": result.n_paths,
         "n_steps": result.n_steps,
         "seed": result.seed,
@@ -161,8 +199,6 @@ if "result_data" in st.session_state:
     st.subheader("Portfolio Value Over Time")
     from app.components.charts import fan_chart
 
-    import numpy as np
-
     # Reconstruct enough of SimulationResult for the chart
     class _ChartResult:
         def __init__(self, d: dict) -> None:  # type: ignore[type-arg]
@@ -180,6 +216,21 @@ if "result_data" in st.session_state:
     fig = fan_chart(chart_result)  # type: ignore[arg-type]
     st.plotly_chart(fig, use_container_width=True)
 
+    # Spaghetti chart toggle
+    if data.get("sample_paths"):
+        show_paths = st.checkbox("Show individual paths")
+        if show_paths:
+            from app.components.charts import spaghetti_chart
+
+            spaghetti_fig = spaghetti_chart(
+                data["sample_paths"],
+                data["sample_labels"],
+                data["plan_current_age"],
+                data["plan_end_age"],
+                data["plan_retirement_age"],
+            )
+            st.plotly_chart(spaghetti_fig, use_container_width=True)
+
     # Spending fan chart
     if "spending_time_series" in data:
         st.subheader("Monthly Spending Over Time")
@@ -192,6 +243,17 @@ if "result_data" in st.session_state:
             data["plan_retirement_age"],
         )
         st.plotly_chart(spending_fig, use_container_width=True)
+
+    # Terminal wealth histogram
+    if data.get("terminal_values"):
+        st.subheader("Terminal Wealth Distribution")
+        from app.components.charts import terminal_wealth_histogram
+
+        hist_fig = terminal_wealth_histogram(
+            data["terminal_values"],
+            data["terminal_wealth_percentiles"],
+        )
+        st.plotly_chart(hist_fig, use_container_width=True)
 
     # Max drawdown and ruin curve
     if data.get("max_drawdown"):
@@ -221,6 +283,26 @@ if "result_data" in st.session_state:
         with col2:
             st.write(f"**Engine Version:** {data.get('engine_version', 'N/A')}")
             st.write(f"**Config Hash:** `{data.get('config_hash', 'N/A')[:12]}...`")
+
+        # Allocation area chart in details
+        from app.components.charts import allocation_area_chart
+
+        assets_data = [{"name": a.name, "weight": a.weight} for a in market.assets]
+        gp_data = None
+        if market.glide_path:
+            gp_data = {
+                "start_age": market.glide_path.start_age,
+                "start_weights": market.glide_path.start_weights,
+                "end_age": market.glide_path.end_age,
+                "end_weights": market.glide_path.end_weights,
+            }
+        alloc_fig = allocation_area_chart(
+            assets_data,
+            gp_data,
+            data["plan_current_age"],
+            data["plan_end_age"],
+        )
+        st.plotly_chart(alloc_fig, use_container_width=True)
 
     # Save scenario for comparison
     st.subheader("Save for Comparison")

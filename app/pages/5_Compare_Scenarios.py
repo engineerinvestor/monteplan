@@ -5,6 +5,11 @@ from __future__ import annotations
 import streamlit as st
 
 st.set_page_config(page_title="Compare Scenarios — MontePlan", layout="wide")
+
+from app.components.theme import register_theme
+
+register_theme()
+
 st.title("Compare Scenarios")
 
 # Initialize saved scenarios

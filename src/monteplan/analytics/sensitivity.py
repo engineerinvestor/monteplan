@@ -7,7 +7,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
+
 from monteplan.config.schema import (
+    AssetClass,
     MarketAssumptions,
     PlanConfig,
     PolicyBundle,
@@ -40,6 +43,20 @@ class SensitivityReport:
 
     results: list[SensitivityResult] = field(default_factory=list)
     base_success_probability: float = 0.0
+
+
+@dataclass(frozen=True)
+class HeatmapResult:
+    """Result of a 2D sensitivity grid analysis."""
+
+    x_param_name: str
+    y_param_name: str
+    x_values: list[float]
+    y_values: list[float]
+    success_grid: list[list[float]]  # [y_idx][x_idx]
+    base_x_value: float
+    base_y_value: float
+    base_success: float
 
 
 @dataclass
@@ -80,6 +97,78 @@ def _make_contribution_setter(idx: int) -> _Setter:
         return p.model_copy(update={"accounts": new_accounts})
 
     return setter
+
+
+def _stock_allocation_setter(m: MarketAssumptions, val: float) -> MarketAssumptions:
+    """Set stock allocation weight (first asset), adjusting second asset to keep sum=1."""
+    clamped = max(0.0, min(1.0, val))
+    new_assets = list(m.assets)
+    new_assets[0] = AssetClass(name=new_assets[0].name, weight=clamped)
+    if len(new_assets) > 1:
+        new_assets[1] = AssetClass(name=new_assets[1].name, weight=1.0 - clamped)
+    return m.model_copy(update={"assets": new_assets})
+
+
+def _build_param_registry(
+    plan: PlanConfig,
+    market: MarketAssumptions,
+) -> dict[str, _ParamSpec]:
+    """Build the full registry of perturbable parameters."""
+    all_params: dict[str, _ParamSpec] = {}
+    n_assets = len(market.assets)
+
+    for i in range(n_assets):
+        asset_name = market.assets[i].name
+        all_params[f"{asset_name} Return"] = _ParamSpec(
+            getter=lambda m, idx=i: m.expected_annual_returns[idx],
+            setter=_make_market_return_setter(i),
+            is_additive=False,
+        )
+        all_params[f"{asset_name} Volatility"] = _ParamSpec(
+            getter=lambda m, idx=i: m.annual_volatilities[idx],
+            setter=_make_market_vol_setter(i),
+            is_additive=False,
+        )
+
+    all_params["Inflation Rate"] = _ParamSpec(
+        getter=lambda m: m.inflation_mean,
+        setter=lambda m, v: m.model_copy(update={"inflation_mean": v}),
+        is_additive=False,
+    )
+
+    all_params["Monthly Spending"] = _ParamSpec(
+        getter=lambda p: p.monthly_spending,
+        setter=lambda p, v: p.model_copy(update={"monthly_spending": v}),
+        is_additive=False,
+        target="plan",
+    )
+
+    all_params["Retirement Age"] = _ParamSpec(
+        getter=lambda p: float(p.retirement_age),
+        setter=lambda p, v: p.model_copy(update={"retirement_age": int(round(v))}),
+        is_additive=True,
+        additive_delta=2.0,
+        target="plan",
+    )
+
+    for i, acct in enumerate(plan.accounts):
+        if acct.annual_contribution > 0:
+            all_params[f"{acct.account_type.title()} Contribution"] = _ParamSpec(
+                getter=lambda p, idx=i: p.accounts[idx].annual_contribution,
+                setter=_make_contribution_setter(i),
+                is_additive=False,
+                target="plan",
+            )
+
+    # Stock allocation (first asset weight)
+    if n_assets >= 2:
+        all_params["Stock Allocation"] = _ParamSpec(
+            getter=lambda m: m.assets[0].weight,
+            setter=_stock_allocation_setter,
+            is_additive=False,
+        )
+
+    return all_params
 
 
 def _run_one(
@@ -136,55 +225,7 @@ def run_sensitivity(
     base_success = base_result.success_probability
 
     # Define all perturbable parameters
-    all_params: dict[str, _ParamSpec] = {}
-    n_assets = len(market.assets)
-
-    # Market return parameters
-    for i in range(n_assets):
-        asset_name = market.assets[i].name
-        all_params[f"{asset_name} Return"] = _ParamSpec(
-            getter=lambda m, idx=i: m.expected_annual_returns[idx],
-            setter=_make_market_return_setter(i),
-            is_additive=False,
-        )
-        all_params[f"{asset_name} Volatility"] = _ParamSpec(
-            getter=lambda m, idx=i: m.annual_volatilities[idx],
-            setter=_make_market_vol_setter(i),
-            is_additive=False,
-        )
-
-    # Inflation
-    all_params["Inflation Rate"] = _ParamSpec(
-        getter=lambda m: m.inflation_mean,
-        setter=lambda m, v: m.model_copy(update={"inflation_mean": v}),
-        is_additive=False,
-    )
-
-    # Plan parameters
-    all_params["Monthly Spending"] = _ParamSpec(
-        getter=lambda p: p.monthly_spending,
-        setter=lambda p, v: p.model_copy(update={"monthly_spending": v}),
-        is_additive=False,
-        target="plan",
-    )
-
-    all_params["Retirement Age"] = _ParamSpec(
-        getter=lambda p: float(p.retirement_age),
-        setter=lambda p, v: p.model_copy(update={"retirement_age": int(round(v))}),
-        is_additive=True,
-        additive_delta=2.0,
-        target="plan",
-    )
-
-    # Account contributions
-    for i, acct in enumerate(plan.accounts):
-        if acct.annual_contribution > 0:
-            all_params[f"{acct.account_type.title()} Contribution"] = _ParamSpec(
-                getter=lambda p, idx=i: p.accounts[idx].annual_contribution,
-                setter=_make_contribution_setter(i),
-                is_additive=False,
-                target="plan",
-            )
+    all_params = _build_param_registry(plan, market)
 
     # Filter to requested parameters
     if parameters is not None:
@@ -293,3 +334,113 @@ def run_sensitivity(
         )
 
     return report
+
+
+def run_2d_sensitivity(
+    plan: PlanConfig,
+    market: MarketAssumptions,
+    policies: PolicyBundle,
+    sim_config: SimulationConfig,
+    x_param: str,
+    y_param: str,
+    x_range: tuple[float, float],
+    y_range: tuple[float, float],
+    x_steps: int = 12,
+    y_steps: int = 12,
+    max_workers: int | None = None,
+) -> HeatmapResult:
+    """Run a 2D grid sensitivity analysis.
+
+    Varies two parameters simultaneously and measures success probability
+    across an x_steps x y_steps grid.
+
+    Args:
+        plan: Financial plan configuration.
+        market: Market assumptions.
+        policies: Policy bundle.
+        sim_config: Simulation config (n_paths capped at 1000 for speed).
+        x_param: Name of the x-axis parameter.
+        y_param: Name of the y-axis parameter.
+        x_range: (min, max) range for x parameter.
+        y_range: (min, max) range for y parameter.
+        x_steps: Number of grid points along x-axis.
+        y_steps: Number of grid points along y-axis.
+        max_workers: Maximum number of parallel workers.
+
+    Returns:
+        HeatmapResult with the success probability grid.
+    """
+    # Cap paths for speed
+    capped_paths = min(sim_config.n_paths, 1000)
+    base_sim = sim_config.model_copy(update={"n_paths": capped_paths, "preset": None})
+
+    all_params = _build_param_registry(plan, market)
+
+    if x_param not in all_params:
+        raise ValueError(f"Unknown parameter: {x_param}")
+    if y_param not in all_params:
+        raise ValueError(f"Unknown parameter: {y_param}")
+
+    x_spec = all_params[x_param]
+    y_spec = all_params[y_param]
+
+    x_values = np.linspace(x_range[0], x_range[1], x_steps).tolist()
+    y_values = np.linspace(y_range[0], y_range[1], y_steps).tolist()
+
+    # Get base values
+    x_target: PlanConfig | MarketAssumptions = plan if x_spec.target == "plan" else market
+    y_target: PlanConfig | MarketAssumptions = plan if y_spec.target == "plan" else market
+    base_x = x_spec.getter(x_target)
+    base_y = y_spec.getter(y_target)
+
+    # Base run
+    base_result = simulate(plan, market, policies, base_sim)
+    base_success = base_result.success_probability * 100
+
+    # Build all grid jobs
+    jobs: list[tuple[int, int, PlanConfig, MarketAssumptions, PolicyBundle, SimulationConfig]] = []
+    for yi, yv in enumerate(y_values):
+        for xi, xv in enumerate(x_values):
+            cur_plan = plan
+            cur_market = market
+            # Apply x parameter
+            if x_spec.target == "plan":
+                cur_plan = x_spec.setter(cur_plan, xv)
+            else:
+                cur_market = x_spec.setter(cur_market, xv)
+            # Apply y parameter
+            if y_spec.target == "plan":
+                cur_plan = y_spec.setter(cur_plan, yv)
+            else:
+                cur_market = y_spec.setter(cur_market, yv)
+            jobs.append((yi, xi, cur_plan, cur_market, policies, base_sim))
+
+    # Run all jobs
+    grid: list[list[float]] = [[0.0] * x_steps for _ in range(y_steps)]
+
+    if max_workers == 1:
+        for yi, xi, j_plan, j_market, j_policies, j_sim in jobs:
+            success = _run_one(j_plan, j_market, j_policies, j_sim)
+            grid[yi][xi] = max(success, 0.0) * 100
+    else:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
+            future_to_idx: dict[concurrent.futures.Future[float], tuple[int, int]] = {}
+            for yi, xi, j_plan, j_market, j_policies, j_sim in jobs:
+                future = executor.submit(_run_one, j_plan, j_market, j_policies, j_sim)
+                future_to_idx[future] = (yi, xi)
+
+            for future in concurrent.futures.as_completed(future_to_idx):
+                yi, xi = future_to_idx[future]
+                success = future.result()
+                grid[yi][xi] = max(success, 0.0) * 100
+
+    return HeatmapResult(
+        x_param_name=x_param,
+        y_param_name=y_param,
+        x_values=x_values,
+        y_values=y_values,
+        success_grid=grid,
+        base_x_value=base_x,
+        base_y_value=base_y,
+        base_success=base_success,
+    )

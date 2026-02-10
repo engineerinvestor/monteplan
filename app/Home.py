@@ -11,6 +11,10 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+from app.components.theme import register_theme
+
+register_theme()
+
 st.title("MontePlan")
 st.subheader("Monte Carlo Financial Planning Simulator")
 

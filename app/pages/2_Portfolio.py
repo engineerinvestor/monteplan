@@ -16,6 +16,11 @@ from monteplan.config.schema import (
 )
 
 st.set_page_config(page_title="Portfolio — MontePlan", layout="wide")
+
+from app.components.theme import register_theme
+
+register_theme()
+
 st.title("Portfolio & Assumptions")
 
 # Initialize defaults
@@ -69,6 +74,29 @@ if use_glide:
         f"Allocation shifts from {stock_weight}% stocks at age {gp_start_age} "
         f"to {gp_end_stock}% stocks at age {gp_end_age}"
     )
+
+# Allocation area chart preview
+from app.components.charts import allocation_area_chart
+
+plan_data = st.session_state.get("plan")
+_preview_current_age = plan_data.current_age if plan_data else 30
+_preview_end_age = plan_data.end_age if plan_data else 90
+_preview_assets = [
+    {"name": "US Stocks", "weight": stock_weight / 100},
+    {"name": "US Bonds", "weight": bond_weight / 100},
+]
+_preview_gp = None
+if use_glide:
+    _preview_gp = {
+        "start_age": gp_start_age,
+        "start_weights": [stock_weight / 100, bond_weight / 100],
+        "end_age": gp_end_age,
+        "end_weights": [gp_end_stock / 100, (100 - gp_end_stock) / 100],
+    }
+_alloc_fig = allocation_area_chart(
+    _preview_assets, _preview_gp, _preview_current_age, _preview_end_age,
+)
+st.plotly_chart(_alloc_fig, use_container_width=True)
 
 # --- Market Assumptions ---
 with st.expander("Market Assumptions", expanded=False):
