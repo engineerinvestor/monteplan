@@ -35,20 +35,21 @@ class HistoricalBootstrapReturns:
         Returns:
             Array of shape (n_paths, n_steps, n_assets) with monthly returns.
         """
-        result = np.empty((n_paths, n_steps, self._n_assets))
         max_start = self._n_months - self._block_size
 
         # Number of blocks needed to fill n_steps
         n_blocks = int(np.ceil(n_steps / self._block_size))
 
-        for p in range(n_paths):
-            blocks = []
-            for _ in range(n_blocks):
-                # Random block start index
-                start = rng.integers(0, max_start + 1)
-                blocks.append(self._data[start : start + self._block_size])
-            # Concatenate and truncate to n_steps
-            path = np.concatenate(blocks, axis=0)[:n_steps]
-            result[p] = path
+        # Generate all block start indices at once: (n_paths, n_blocks)
+        block_starts = rng.integers(0, max_start + 1, size=(n_paths, n_blocks))
 
+        # Build global indices: (n_paths, n_blocks, block_size)
+        month_offsets = np.arange(self._block_size)
+        global_idx = block_starts[:, :, np.newaxis] + month_offsets[np.newaxis, np.newaxis, :]
+
+        # Gather all blocks via fancy indexing: (n_paths, n_blocks * block_size, n_assets)
+        all_blocks = self._data[global_idx.reshape(n_paths, -1)]
+
+        # Truncate to n_steps
+        result: np.ndarray = all_blocks[:, :n_steps, :]
         return result

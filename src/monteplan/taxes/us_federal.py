@@ -5,6 +5,9 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import numpy as np
+from numpy.typing import NDArray
+
 from monteplan.io.yaml_loader import load_package_yaml
 
 
@@ -38,6 +41,22 @@ class USFederalTaxModel:
             if taxable_in_bracket <= 0:
                 break
             tax += taxable_in_bracket * rate
+            prev_bound = upper_bound
+        return tax
+
+    def _apply_brackets_vectorized(
+        self,
+        taxable_income: NDArray[np.floating[Any]],
+        brackets: list[list[Any]],
+    ) -> NDArray[np.floating[Any]]:
+        """Vectorized progressive bracket computation across all paths."""
+        tax: NDArray[np.floating[Any]] = np.zeros_like(taxable_income)
+        prev_bound = 0.0
+        for upper_bound, rate in brackets:
+            if upper_bound is None:
+                upper_bound = np.inf
+            taxable_in_bracket = np.minimum(taxable_income, upper_bound) - prev_bound
+            tax += np.maximum(taxable_in_bracket, 0.0) * rate
             prev_bound = upper_bound
         return tax
 
@@ -80,6 +99,31 @@ class USFederalTaxModel:
         ltcg_tax = self._apply_brackets(ltcg, self._ltcg_brackets[filing_status])
 
         return ordinary_tax + ltcg_tax
+
+    def compute_annual_tax_vectorized(
+        self,
+        ordinary_income: NDArray[np.floating[Any]],
+        ltcg: NDArray[np.floating[Any]],
+        filing_status: str,
+    ) -> NDArray[np.floating[Any]]:
+        """Vectorized annual tax across all paths.
+
+        Args:
+            ordinary_income: (n_paths,) ordinary income per path.
+            ltcg: (n_paths,) long-term capital gains per path.
+            filing_status: Filing status key.
+
+        Returns:
+            (n_paths,) total tax liability per path.
+        """
+        std_ded = self._standard_deduction[filing_status]
+        taxable_ordinary = np.maximum(ordinary_income - std_ded, 0.0)
+        ordinary_tax = self._apply_brackets_vectorized(
+            taxable_ordinary, self._ordinary_brackets[filing_status]
+        )
+        ltcg_tax = self._apply_brackets_vectorized(ltcg, self._ltcg_brackets[filing_status])
+        result: NDArray[np.floating[Any]] = ordinary_tax + ltcg_tax
+        return result
 
     def marginal_rate(self, taxable_income: float, filing_status: str) -> float:
         """Return the marginal ordinary income tax rate at given taxable income."""

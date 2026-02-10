@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import Any, Protocol
+
+import numpy as np
+from numpy.typing import NDArray
 
 
 class TaxModel(Protocol):
@@ -31,6 +34,24 @@ class TaxModel(Protocol):
 
         Returns:
             Total tax liability.
+        """
+        ...
+
+    def compute_annual_tax_vectorized(
+        self,
+        ordinary_income: NDArray[np.floating[Any]],
+        ltcg: NDArray[np.floating[Any]],
+        filing_status: str,
+    ) -> NDArray[np.floating[Any]]:
+        """Vectorized annual tax across all paths.
+
+        Args:
+            ordinary_income: (n_paths,) ordinary income per path.
+            ltcg: (n_paths,) long-term capital gains per path.
+            filing_status: ``"single"`` or ``"married_jointly"``.
+
+        Returns:
+            (n_paths,) total tax liability per path.
         """
         ...
 

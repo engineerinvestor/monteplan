@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import numpy as np
+from numpy.typing import NDArray
+
 
 class FlatTaxModel:
     """Flat effective tax rate applied to traditional withdrawals and income."""
@@ -25,6 +30,16 @@ class FlatTaxModel:
     ) -> float:
         """Compute total annual tax at flat rate."""
         return (ordinary_income + ltcg) * self._rate
+
+    def compute_annual_tax_vectorized(
+        self,
+        ordinary_income: NDArray[np.floating[Any]],
+        ltcg: NDArray[np.floating[Any]],
+        filing_status: str,
+    ) -> NDArray[np.floating[Any]]:
+        """Vectorized annual tax at flat rate across all paths."""
+        result: NDArray[np.floating[Any]] = (ordinary_income + ltcg) * self._rate
+        return result
 
     def marginal_rate(self, taxable_income: float, filing_status: str) -> float:
         """Marginal rate is always the flat rate."""

@@ -8,6 +8,75 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+class RegimeConfig(BaseModel):
+    """Parameters for a single market regime."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(description="Regime name (e.g. 'bull', 'bear', 'normal')")
+    expected_annual_returns: list[float] = Field(description="Per-asset annual returns")
+    annual_volatilities: list[float] = Field(description="Per-asset annual volatilities")
+    correlation_matrix: list[list[float]] = Field(description="Asset correlation matrix")
+    inflation_mean: float = Field(description="Long-run annual inflation rate for this regime")
+    inflation_vol: float = Field(ge=0, description="Inflation annual volatility for this regime")
+
+
+class RegimeSwitchingConfig(BaseModel):
+    """Markov regime-switching model configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    regimes: list[RegimeConfig] = Field(min_length=2, max_length=5)
+    transition_matrix: list[list[float]] = Field(
+        description="Row-stochastic transition matrix (rows sum to 1)"
+    )
+    initial_regime: int = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_regime_switching(self) -> RegimeSwitchingConfig:
+        n = len(self.regimes)
+        # Validate transition matrix dimensions
+        if len(self.transition_matrix) != n:
+            raise ValueError(
+                f"transition_matrix must have {n} rows, got {len(self.transition_matrix)}"
+            )
+        for i, row in enumerate(self.transition_matrix):
+            if len(row) != n:
+                raise ValueError(f"transition_matrix row {i} has length {len(row)}, expected {n}")
+            if abs(sum(row) - 1.0) > 1e-6:
+                raise ValueError(f"transition_matrix row {i} sums to {sum(row)}, expected 1.0")
+        # Validate initial_regime
+        if self.initial_regime >= n:
+            raise ValueError(
+                f"initial_regime ({self.initial_regime}) must be < number of regimes ({n})"
+            )
+        # Validate all regimes have same number of assets
+        n_assets = len(self.regimes[0].expected_annual_returns)
+        for i, regime in enumerate(self.regimes):
+            if len(regime.expected_annual_returns) != n_assets:
+                raise ValueError(
+                    f"Regime {i} has {len(regime.expected_annual_returns)} assets, "
+                    f"expected {n_assets}"
+                )
+            if len(regime.annual_volatilities) != n_assets:
+                raise ValueError(
+                    f"Regime {i} volatilities length mismatch: "
+                    f"{len(regime.annual_volatilities)} vs {n_assets}"
+                )
+            if len(regime.correlation_matrix) != n_assets:
+                raise ValueError(f"Regime {i} correlation_matrix must be {n_assets}x{n_assets}")
+            for j, row in enumerate(regime.correlation_matrix):
+                if len(row) != n_assets:
+                    raise ValueError(f"Regime {i} correlation_matrix row {j} length mismatch")
+            # Validate correlation matrix symmetry and diagonal
+            corr = np.array(regime.correlation_matrix)
+            if not np.allclose(corr, corr.T, atol=1e-8):
+                raise ValueError(f"Regime {i} correlation matrix must be symmetric")
+            if not np.allclose(np.diag(corr), 1.0, atol=1e-8):
+                raise ValueError(f"Regime {i} correlation matrix diagonal must be 1.0")
+        return self
+
+
 class DiscreteEvent(BaseModel):
     """A one-time financial event at a specific age."""
 
@@ -111,7 +180,7 @@ class MarketAssumptions(BaseModel):
     correlation_matrix: list[list[float]]
     inflation_mean: float = Field(default=0.03, description="Long-run annual inflation rate")
     inflation_vol: float = Field(default=0.01, ge=0, description="Inflation annual volatility")
-    return_model: Literal["mvn", "student_t", "bootstrap"] = Field(
+    return_model: Literal["mvn", "student_t", "bootstrap", "regime_switching"] = Field(
         default="mvn",
         description="Return model type",
     )
@@ -128,6 +197,10 @@ class MarketAssumptions(BaseModel):
         default=12,
         ge=1,
         description="Block size for block bootstrap (months)",
+    )
+    regime_switching: RegimeSwitchingConfig | None = Field(
+        default=None,
+        description="Regime-switching model configuration",
     )
     glide_path: GlidePath | None = Field(
         default=None,
@@ -196,10 +269,31 @@ class SimulationConfig(BaseModel):
     n_paths: int = Field(default=5000, ge=1, le=1_000_000)
     seed: int = Field(default=42, ge=0)
     store_paths: bool = Field(default=False, description="Store full path data (memory-heavy)")
+    antithetic: bool = Field(
+        default=False,
+        description="Use antithetic variates for variance reduction",
+    )
+    preset: Literal["fast", "balanced", "deep"] | None = Field(
+        default=None,
+        description="Simulation quality preset (overrides n_paths and antithetic)",
+    )
     stress_scenarios: list[StressScenario] = Field(
         default_factory=list,
         description="Deterministic stress scenarios to apply",
     )
+
+    @model_validator(mode="after")
+    def _apply_preset(self) -> SimulationConfig:
+        if self.preset is not None:
+            preset_configs = {
+                "fast": (1000, False),
+                "balanced": (5000, False),
+                "deep": (20000, True),
+            }
+            n_paths, antithetic = preset_configs[self.preset]
+            self.n_paths = n_paths
+            self.antithetic = antithetic
+        return self
 
 
 class GuardrailsConfig(BaseModel):

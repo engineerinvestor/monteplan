@@ -9,6 +9,8 @@ from monteplan.config.schema import (
     AssetClass,
     GlidePath,
     MarketAssumptions,
+    RegimeConfig,
+    RegimeSwitchingConfig,
     SimulationConfig,
     StressScenario,
 )
@@ -109,10 +111,11 @@ with st.expander("Market Assumptions", expanded=False):
 
 # --- Return Model ---
 st.subheader("Return Model")
-return_model_options = ["mvn", "student_t"]
+return_model_options = ["mvn", "student_t", "regime_switching"]
 return_model_labels = {
     "mvn": "Multivariate Normal",
     "student_t": "Student-t (fat tails)",
+    "regime_switching": "Regime Switching (Markov)",
 }
 return_model = st.selectbox(
     "Return Distribution",
@@ -130,6 +133,70 @@ if return_model == "student_t":
         value=market.degrees_of_freedom or 5.0,
         step=0.5,
         help="Lower values = fatter tails. Typical range: 4-8.",
+    )
+
+regime_switching_config: RegimeSwitchingConfig | None = None
+if return_model == "regime_switching":
+    st.markdown("**Regime Parameters**")
+    st.caption("Define 2-3 market regimes (bull/normal/bear) with transition probabilities.")
+
+    n_regimes = st.radio("Number of Regimes", [2, 3], index=1, horizontal=True)
+
+    regime_defaults = [
+        {"name": "Bull", "ret_stock": 12.0, "ret_bond": 5.0, "vol_stock": 12.0, "vol_bond": 4.0, "infl": 2.5, "infl_vol": 0.8},
+        {"name": "Normal", "ret_stock": 7.0, "ret_bond": 3.0, "vol_stock": 16.0, "vol_bond": 6.0, "infl": 3.0, "infl_vol": 1.0},
+        {"name": "Bear", "ret_stock": -5.0, "ret_bond": 1.0, "vol_stock": 25.0, "vol_bond": 8.0, "infl": 4.5, "infl_vol": 2.0},
+    ]
+
+    regimes: list[RegimeConfig] = []
+    for i in range(n_regimes):
+        d = regime_defaults[i]
+        with st.expander(f"Regime {i+1}: {d['name']}", expanded=i == 0):
+            r_name = st.text_input("Name", value=d["name"], key=f"regime_name_{i}")
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                r_ret_s = st.number_input("Stock Return (%)", value=d["ret_stock"], step=1.0, key=f"r_ret_s_{i}")
+                r_vol_s = st.number_input("Stock Vol (%)", value=d["vol_stock"], step=1.0, key=f"r_vol_s_{i}")
+            with c2:
+                r_ret_b = st.number_input("Bond Return (%)", value=d["ret_bond"], step=0.5, key=f"r_ret_b_{i}")
+                r_vol_b = st.number_input("Bond Vol (%)", value=d["vol_bond"], step=0.5, key=f"r_vol_b_{i}")
+            with c3:
+                r_infl = st.number_input("Inflation (%)", value=d["infl"], step=0.25, key=f"r_infl_{i}")
+                r_infl_vol = st.number_input("Inflation Vol (%)", value=d["infl_vol"], step=0.25, key=f"r_infl_vol_{i}")
+            regimes.append(RegimeConfig(
+                name=r_name,
+                expected_annual_returns=[r_ret_s / 100, r_ret_b / 100],
+                annual_volatilities=[r_vol_s / 100, r_vol_b / 100],
+                correlation_matrix=[[1.0, correlation], [correlation, 1.0]],
+                inflation_mean=r_infl / 100,
+                inflation_vol=r_infl_vol / 100,
+            ))
+
+    st.markdown("**Transition Matrix** (monthly probability of switching)")
+    trans_defaults_2 = [[0.97, 0.03], [0.05, 0.95]]
+    trans_defaults_3 = [[0.95, 0.04, 0.01], [0.03, 0.94, 0.03], [0.02, 0.05, 0.93]]
+    trans_defaults = trans_defaults_3 if n_regimes == 3 else trans_defaults_2
+
+    transition_matrix: list[list[float]] = []
+    for i in range(n_regimes):
+        cols_tm = st.columns(n_regimes)
+        row: list[float] = []
+        for j in range(n_regimes):
+            with cols_tm[j]:
+                val = st.number_input(
+                    f"P({regimes[i].name}→{regimes[j].name})",
+                    min_value=0.0, max_value=1.0,
+                    value=trans_defaults[i][j],
+                    step=0.01, key=f"trans_{i}_{j}",
+                    format="%.2f",
+                )
+                row.append(val)
+        transition_matrix.append(row)
+
+    regime_switching_config = RegimeSwitchingConfig(
+        regimes=regimes,
+        transition_matrix=transition_matrix,
+        initial_regime=1 if n_regimes == 3 else 0,
     )
 
 # --- Stress Scenarios ---
@@ -177,13 +244,13 @@ for stype, label in stress_options.items():
 # --- Simulation Settings ---
 st.subheader("Simulation Settings")
 preset = st.radio(
-    "Path Count",
+    "Quality Preset",
     ["Fast (1,000)", "Balanced (5,000)", "Deep (20,000)"],
     index=1,
     horizontal=True,
 )
-preset_map = {"Fast (1,000)": 1000, "Balanced (5,000)": 5000, "Deep (20,000)": 20000}
-n_paths = preset_map[preset]
+preset_map = {"Fast (1,000)": "fast", "Balanced (5,000)": "balanced", "Deep (20,000)": "deep"}
+sim_preset = preset_map[preset]
 
 seed = st.number_input("Random Seed", value=sim_config.seed, min_value=0)
 
@@ -214,11 +281,12 @@ if st.button("Save Portfolio & Settings", type="primary"):
             inflation_vol=market.inflation_vol,
             return_model=return_model,
             degrees_of_freedom=degrees_of_freedom if return_model == "student_t" else None,
+            regime_switching=regime_switching_config if return_model == "regime_switching" else None,
             glide_path=glide_path,
         )
         new_sim = SimulationConfig(
-            n_paths=n_paths,
             seed=int(seed),
+            preset=sim_preset,
             stress_scenarios=selected_scenarios,
         )
 

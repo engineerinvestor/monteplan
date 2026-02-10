@@ -17,9 +17,10 @@ from monteplan.core.rng import make_rng
 from monteplan.core.state import SimulationState
 from monteplan.core.timeline import Timeline
 from monteplan.io.serialize import compute_config_hash
-from monteplan.models.inflation import OUInflationModel
+from monteplan.models.inflation import OUInflationModel, RegimeSwitchingInflationModel
 from monteplan.models.returns.bootstrap import HistoricalBootstrapReturns
 from monteplan.models.returns.mvn import MultivariateNormalReturns, StudentTReturns
+from monteplan.models.returns.regime_switching import RegimeSwitchingReturns
 from monteplan.models.stress import apply_stress_scenarios
 from monteplan.policies.contributions import apply_contributions, compute_monthly_contributions
 from monteplan.policies.rebalancing import rebalance_to_targets
@@ -71,6 +72,11 @@ def simulate(
     """
     rng = make_rng(sim_config.seed)
     n_paths = sim_config.n_paths
+    antithetic = sim_config.antithetic
+
+    # Round n_paths to even when antithetic is enabled
+    if antithetic and n_paths % 2 != 0:
+        n_paths += 1
 
     # Build timeline
     timeline = Timeline.from_ages(
@@ -82,26 +88,41 @@ def simulate(
     n_steps = timeline.n_steps
 
     # Pre-generate all returns and inflation upfront
-    if market.return_model == "student_t":
-        return_model_obj: (
-            MultivariateNormalReturns | StudentTReturns | HistoricalBootstrapReturns
-        ) = StudentTReturns(market)
-    elif market.return_model == "bootstrap":
-        if market.historical_returns is None:
-            raise ValueError("historical_returns must be provided for bootstrap model")
-        return_model_obj = HistoricalBootstrapReturns(
-            np.array(market.historical_returns),
-            block_size=market.bootstrap_block_size,
-        )
-    else:
-        return_model_obj = MultivariateNormalReturns(market)
-    returns = return_model_obj.sample(n_paths, n_steps, rng)  # (n_paths, n_steps, n_assets)
+    if market.return_model == "regime_switching":
+        if market.regime_switching is None:
+            raise ValueError("regime_switching config must be provided for regime_switching model")
+        rs_model = RegimeSwitchingReturns(market.regime_switching, antithetic=antithetic)
+        returns = rs_model.sample(n_paths, n_steps, rng)
 
-    inflation_model = OUInflationModel(
-        theta=market.inflation_mean,
-        sigma=market.inflation_vol,
-    )
-    inflation_rates = inflation_model.sample(n_paths, n_steps, rng)  # (n_paths, n_steps)
+        # Coupled inflation model using regime indices
+        rs_inflation = RegimeSwitchingInflationModel(
+            regimes=list(market.regime_switching.regimes),
+        )
+        assert rs_model.regime_indices is not None
+        inflation_rates = rs_inflation.sample(n_paths, n_steps, rng, rs_model.regime_indices)
+    else:
+        if market.return_model == "student_t":
+            return_model_obj: (
+                MultivariateNormalReturns | StudentTReturns | HistoricalBootstrapReturns
+            ) = StudentTReturns(market, antithetic=antithetic)
+        elif market.return_model == "bootstrap":
+            if market.historical_returns is None:
+                raise ValueError("historical_returns must be provided for bootstrap model")
+            # Bootstrap: antithetic not applicable (no normal draws), silently ignored
+            return_model_obj = HistoricalBootstrapReturns(
+                np.array(market.historical_returns),
+                block_size=market.bootstrap_block_size,
+            )
+        else:
+            return_model_obj = MultivariateNormalReturns(market, antithetic=antithetic)
+        returns = return_model_obj.sample(n_paths, n_steps, rng)  # (n_paths, n_steps, n_assets)
+
+        inflation_model = OUInflationModel(
+            theta=market.inflation_mean,
+            sigma=market.inflation_vol,
+            antithetic=antithetic,
+        )
+        inflation_rates = inflation_model.sample(n_paths, n_steps, rng)  # (n_paths, n_steps)
 
     # Apply stress scenario overlays (before main loop)
     if sim_config.stress_scenarios:
@@ -290,21 +311,17 @@ def simulate(
 
         # 7. Year-end annual tax computation (for US federal model)
         if policies.tax_model == "us_federal" and month == 12:
-            # Compute annual tax for each path and deduct from accounts
-            for p_idx in range(n_paths):
-                if state.is_depleted[p_idx]:
-                    continue
-                annual_tax = tax_model.compute_annual_tax(
-                    float(state.annual_ordinary_income[p_idx]),
-                    float(state.annual_ltcg[p_idx]),
-                    policies.filing_status,
-                )
-                if annual_tax > 0:
-                    # Deduct tax pro-rata from all accounts
-                    total_w = float(state.total_wealth[p_idx])
-                    if total_w > 0:
-                        tax_frac = min(annual_tax / total_w, 1.0)
-                        state.positions[p_idx, :, :] *= 1.0 - tax_frac
+            # Vectorized tax computation across all paths
+            annual_tax = tax_model.compute_annual_tax_vectorized(
+                state.annual_ordinary_income,
+                state.annual_ltcg,
+                policies.filing_status,
+            )
+            annual_tax = np.where(state.is_depleted, 0.0, annual_tax)
+            total_w = state.total_wealth
+            safe_total = np.where(total_w > 0, total_w, 1.0)
+            tax_frac = np.minimum(annual_tax / safe_total, 1.0)
+            state.positions *= 1.0 - tax_frac[:, np.newaxis, np.newaxis]
             # Snapshot traditional balance for next year's RMD
             trad_indices_yr = [
                 i for i, tp in enumerate(state.account_types) if tp == "traditional"

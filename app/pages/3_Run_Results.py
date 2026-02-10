@@ -155,6 +155,25 @@ if "result_data" in st.session_state:
             st.write(f"**Engine Version:** {data.get('engine_version', 'N/A')}")
             st.write(f"**Config Hash:** `{data.get('config_hash', 'N/A')[:12]}...`")
 
+    # Save scenario for comparison
+    st.subheader("Save for Comparison")
+    scenario_name = st.text_input(
+        "Scenario Name",
+        value=f"Scenario {len(st.session_state.get('saved_scenarios', {})) + 1}",
+        key="scenario_name_input",
+    )
+    if st.button("Save Scenario for Comparison"):
+        if "saved_scenarios" not in st.session_state:
+            st.session_state["saved_scenarios"] = {}
+        st.session_state["saved_scenarios"][scenario_name] = {
+            **data,
+            "plan_json": plan.model_dump_json(),
+            "market_json": market.model_dump_json(),
+            "policies_json": policies.model_dump_json(),
+            "sim_json": sim_config.model_dump_json(),
+        }
+        st.success(f"Scenario '{scenario_name}' saved! Go to Compare Scenarios page to view.")
+
     # Downloads
     st.subheader("Export")
     col1, col2 = st.columns(2)

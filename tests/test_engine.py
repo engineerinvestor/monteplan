@@ -16,6 +16,8 @@ from monteplan.config.schema import (
     MarketAssumptions,
     PlanConfig,
     PolicyBundle,
+    RegimeConfig,
+    RegimeSwitchingConfig,
     SimulationConfig,
     SpendingPolicyConfig,
 )
@@ -153,6 +155,70 @@ class TestGolden:
         # Median wealth at retirement should be substantial
         assert result.wealth_time_series["p50"][420] > 3_000_000
 
+    def test_golden_regime_switching(self) -> None:
+        """Golden test for regime-switching return model."""
+        plan = default_plan()
+        rs_config = RegimeSwitchingConfig(
+            regimes=[
+                RegimeConfig(
+                    name="bull",
+                    expected_annual_returns=[0.12, 0.05],
+                    annual_volatilities=[0.12, 0.04],
+                    correlation_matrix=[[1.0, 0.0], [0.0, 1.0]],
+                    inflation_mean=0.025,
+                    inflation_vol=0.008,
+                ),
+                RegimeConfig(
+                    name="normal",
+                    expected_annual_returns=[0.07, 0.03],
+                    annual_volatilities=[0.16, 0.06],
+                    correlation_matrix=[[1.0, 0.0], [0.0, 1.0]],
+                    inflation_mean=0.03,
+                    inflation_vol=0.01,
+                ),
+                RegimeConfig(
+                    name="bear",
+                    expected_annual_returns=[-0.05, 0.01],
+                    annual_volatilities=[0.25, 0.08],
+                    correlation_matrix=[[1.0, 0.0], [0.0, 1.0]],
+                    inflation_mean=0.045,
+                    inflation_vol=0.02,
+                ),
+            ],
+            transition_matrix=[
+                [0.95, 0.04, 0.01],
+                [0.03, 0.94, 0.03],
+                [0.02, 0.05, 0.93],
+            ],
+            initial_regime=1,
+        )
+        market = MarketAssumptions(
+            assets=[
+                AssetClass(name="US Stocks", weight=0.7),
+                AssetClass(name="US Bonds", weight=0.3),
+            ],
+            expected_annual_returns=[0.07, 0.03],
+            annual_volatilities=[0.16, 0.06],
+            correlation_matrix=[[1.0, 0.0], [0.0, 1.0]],
+            inflation_mean=0.03,
+            inflation_vol=0.01,
+            return_model="regime_switching",
+            regime_switching=rs_config,
+        )
+        result = simulate(plan, market, PolicyBundle(), SimulationConfig(n_paths=5000, seed=42))
+        assert result.success_probability == pytest.approx(0.3282, abs=0.03)
+
+    def test_golden_antithetic(self) -> None:
+        """Golden test for antithetic variates."""
+        result = simulate(
+            default_plan(),
+            default_market(),
+            default_policies(),
+            SimulationConfig(n_paths=5000, seed=42, antithetic=True),
+        )
+        assert result.success_probability == pytest.approx(0.4986, abs=0.03)
+        assert result.n_paths == 5000
+
 
 class TestPercentOfPortfolioPolicy:
     def test_percent_policy_runs(self) -> None:
@@ -175,4 +241,70 @@ def test_benchmark_simulate(benchmark) -> None:  # type: ignore[no-untyped-def]
     sim = SimulationConfig(n_paths=5000, seed=42)
 
     result = benchmark(simulate, plan, market, policies, sim)
+    assert result.success_probability >= 0
+
+
+def test_benchmark_us_federal(benchmark) -> None:  # type: ignore[no-untyped-def]
+    """Benchmark: simulate() with US federal tax model."""
+    plan = default_plan()
+    market = default_market()
+    policies = PolicyBundle(tax_model="us_federal")
+    sim = SimulationConfig(n_paths=5000, seed=42)
+
+    result = benchmark(simulate, plan, market, policies, sim)
+    assert result.success_probability >= 0
+
+
+def test_benchmark_regime_switching(benchmark) -> None:  # type: ignore[no-untyped-def]
+    """Benchmark: simulate() with regime-switching return model."""
+    plan = default_plan()
+    rs_config = RegimeSwitchingConfig(
+        regimes=[
+            RegimeConfig(
+                name="bull",
+                expected_annual_returns=[0.12, 0.05],
+                annual_volatilities=[0.12, 0.04],
+                correlation_matrix=[[1.0, 0.0], [0.0, 1.0]],
+                inflation_mean=0.025,
+                inflation_vol=0.008,
+            ),
+            RegimeConfig(
+                name="normal",
+                expected_annual_returns=[0.07, 0.03],
+                annual_volatilities=[0.16, 0.06],
+                correlation_matrix=[[1.0, 0.0], [0.0, 1.0]],
+                inflation_mean=0.03,
+                inflation_vol=0.01,
+            ),
+            RegimeConfig(
+                name="bear",
+                expected_annual_returns=[-0.05, 0.01],
+                annual_volatilities=[0.25, 0.08],
+                correlation_matrix=[[1.0, 0.0], [0.0, 1.0]],
+                inflation_mean=0.045,
+                inflation_vol=0.02,
+            ),
+        ],
+        transition_matrix=[
+            [0.95, 0.04, 0.01],
+            [0.03, 0.94, 0.03],
+            [0.02, 0.05, 0.93],
+        ],
+        initial_regime=1,
+    )
+    market = MarketAssumptions(
+        assets=[
+            AssetClass(name="US Stocks", weight=0.7),
+            AssetClass(name="US Bonds", weight=0.3),
+        ],
+        expected_annual_returns=[0.07, 0.03],
+        annual_volatilities=[0.16, 0.06],
+        correlation_matrix=[[1.0, 0.0], [0.0, 1.0]],
+        inflation_mean=0.03,
+        inflation_vol=0.01,
+        return_model="regime_switching",
+        regime_switching=rs_config,
+    )
+    sim = SimulationConfig(n_paths=5000, seed=42)
+    result = benchmark(simulate, plan, market, PolicyBundle(), sim)
     assert result.success_probability >= 0
