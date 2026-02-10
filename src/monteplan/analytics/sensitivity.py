@@ -184,7 +184,7 @@ def _run_one(
     try:
         result = simulate(plan, market, policies, sim_config)
         return result.success_probability
-    except (ValueError, Exception):
+    except Exception:
         return -1.0  # sentinel for failure
 
 
@@ -257,13 +257,13 @@ def run_sensitivity(
             try:
                 low_plan: PlanConfig = spec.setter(plan, low_val)
                 jobs.append((param_name, "low", low_plan, market, policies, base_sim))
-            except (ValueError, Exception):
+            except Exception:
                 jobs.append((param_name, "low_fail", plan, market, policies, base_sim))
         else:
             try:
                 low_market: MarketAssumptions = spec.setter(market, low_val)
                 jobs.append((param_name, "low", plan, low_market, policies, base_sim))
-            except (ValueError, Exception):
+            except Exception:
                 jobs.append((param_name, "low_fail", plan, market, policies, base_sim))
 
         # Build high perturbation config
@@ -271,13 +271,13 @@ def run_sensitivity(
             try:
                 high_plan: PlanConfig = spec.setter(plan, high_val)
                 jobs.append((param_name, "high", high_plan, market, policies, base_sim))
-            except (ValueError, Exception):
+            except Exception:
                 jobs.append((param_name, "high_fail", plan, market, policies, base_sim))
         else:
             try:
                 high_market: MarketAssumptions = spec.setter(market, high_val)
                 jobs.append((param_name, "high", plan, high_market, policies, base_sim))
-            except (ValueError, Exception):
+            except Exception:
                 jobs.append((param_name, "high_fail", plan, market, policies, base_sim))
 
     # Run all perturbation simulations

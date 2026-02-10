@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "monteplan"
-version = "0.3.0"
+version = "0.4.0"
 description = "Monte Carlo financial planning simulator"
 readme = "README.md"
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ authors = [
     { name = "Engineer Investor", email = "egr.investor@gmail.com" },
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3.11",
@@ -21,6 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "Topic :: Office/Business :: Financial",
 ]
+keywords = ["monte-carlo", "financial-planning", "retirement", "simulation"]
 dependencies = [
     "numpy>=1.26",
     "pydantic>=2.5",
@@ -28,6 +29,12 @@ dependencies = [
     "scipy>=1.12",
     "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/engineerinvestor/monteplan"
+Repository = "https://github.com/engineerinvestor/monteplan"
+Documentation = "https://engineerinvestor.github.io/monteplan/"
+"Bug Tracker" = "https://github.com/engineerinvestor/monteplan/issues"
 
 [project.optional-dependencies]
 app = [
@@ -41,6 +48,7 @@ dev = [
     "hypothesis>=6.90",
     "mypy>=1.8",
     "ruff>=0.2",
+    "types-PyYAML>=6.0",
 ]
 docs = [
     "mkdocs>=1.6",

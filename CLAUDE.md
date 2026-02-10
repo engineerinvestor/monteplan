@@ -58,34 +58,33 @@ The project enforces strict separation between three layers:
 
 Models and policies are defined via protocols/ABCs so they can be swapped or extended:
 
-- **Return models** (`models/returns/`): `ReturnModel.sample(n_paths, n_steps, rng) -> ndarray[paths, steps, assets]`. Implementations: multivariate normal/t (default), historical bootstrap, regime-switching, factor model.
+- **Return models** (`models/returns/`): `ReturnModel.sample(n_paths, n_steps, rng) -> ndarray[paths, steps, assets]`. Implementations: multivariate normal/t (default), historical bootstrap, regime-switching.
 - **Spending policies** (`policies/spending/`): `SpendingPolicy.compute(state) -> SpendingDecision`. Each policy is independently testable. Implementations: constant real, percent-of-portfolio, floor-and-ceiling, Guyton-Klinger guardrails, VPW.
 - **Tax model** (`taxes/`): `TaxModel.compute_taxes(income_events, realized_gains, deductions, state)`. Jurisdiction is pluggable; US federal is the baseline. Tax bracket tables are config-driven YAML/CSV, not hardcoded.
 
 ### Config System (`config/`)
 
 - Pydantic or dataclass-based typed configs: `PlanConfig`, `MarketAssumptions`, `SimulationConfig`, `PolicyBundle`.
-- Default assumptions in `defaults.yaml`. All configs are exportable/importable as JSON for reproducibility.
+- Default assumptions in `defaults.py`. All configs are exportable/importable as JSON for reproducibility.
 - Config hashing is used for caching and result provenance.
 
 ### Account Types & Tax Awareness
 
-The engine models taxable, traditional (401k/IRA), Roth, and HSA accounts with distinct tax treatment. Withdrawal ordering policy and RMD integration drive decumulation. Tax bracket tables are stored in `taxes/tables/` as data files.
+The engine models taxable, traditional (401k/IRA), and Roth accounts with distinct tax treatment. Withdrawal ordering policy and RMD integration drive decumulation. Tax bracket tables are stored in `taxes/tables/` as data files.
 
 ### Streamlit App (`app/`)
 
-Multi-page Streamlit app with pages numbered for nav ordering (1_Plan_Setup.py through 7_Sensitivity.py). Uses `st.cache_data`/`st.cache_resource` keyed by config hash for simulation results. No database — user data persists only via downloadable config JSON.
+Multi-page Streamlit app with pages numbered for nav ordering (1_Plan_Setup.py through 6_Sensitivity.py). Uses `st.cache_data`/`st.cache_resource` keyed by config hash for simulation results. No database — user data persists only via downloadable config JSON.
 
 ## Key Conventions
 
 - **Reproducibility**: Every simulation result embeds `config_hash`, `seed`, and `engine_version`. Golden test snapshots verify deterministic outputs for fixed seeds.
 - **Performance**: Vectorized numpy by default; optional numba acceleration (auto-detected). Memory modes: `summary_only=True` stores only percentiles incrementally; `store_paths=False` is the default for web.
 - **Testing**: Property-based tests via Hypothesis for invariants (weights sum to 1, no unexpected negative balances). Table-driven tests for tax calculations. Benchmark suite via `pytest-benchmark` to prevent perf regressions.
-- **Python version**: >=3.11. CI runs a test matrix across 3.11 and 3.12.
+- **Python version**: >=3.11. CI runs a test matrix across 3.11, 3.12, and 3.13.
 - **Time step**: Monthly by default with annual support. All financial math must handle arithmetic/geometric return conversion consistently.
 
 ## Git
 
-- **Remote:** https://github.com/engineerinvestor/monteplan (private)
+- **Remote:** https://github.com/engineerinvestor/monteplan
 - **Commit attribution:** Name: Engineer Investor, Email: egr.investor@gmail.com
-- **GitHub CLI:** Multiple `gh` accounts are configured. Before pushing, ensure the active account is `engineerinvestor`: `gh auth switch --user engineerinvestor`
