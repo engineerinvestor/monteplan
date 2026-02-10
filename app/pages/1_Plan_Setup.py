@@ -1,11 +1,11 @@
-"""Plan Setup page — ages, income, spending, accounts."""
+"""Plan Setup page — ages, income, spending, accounts, events."""
 
 from __future__ import annotations
 
 import streamlit as st
 
 from monteplan.config.defaults import default_plan
-from monteplan.config.schema import AccountConfig, PlanConfig
+from monteplan.config.schema import AccountConfig, DiscreteEvent, PlanConfig
 
 st.set_page_config(page_title="Plan Setup — MontePlan", layout="wide")
 st.title("Plan Setup")
@@ -30,7 +30,7 @@ with col3:
     )
 
 st.subheader("Income & Spending")
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 with col1:
     monthly_income = st.number_input(
         "Monthly Income ($)", min_value=0.0, value=plan.monthly_income, step=500.0
@@ -38,6 +38,15 @@ with col1:
 with col2:
     monthly_spending = st.number_input(
         "Monthly Spending ($)", min_value=0.0, value=plan.monthly_spending, step=500.0
+    )
+with col3:
+    income_growth_rate = st.number_input(
+        "Annual Income Growth (%)",
+        min_value=-10.0,
+        max_value=20.0,
+        value=plan.income_growth_rate * 100,
+        step=0.5,
+        help="Annual real income growth rate (e.g. 2% for raises above inflation)",
     )
 
 income_end_age = st.number_input(
@@ -62,6 +71,38 @@ for i in range(int(n_accounts)):
         acct = account_form(i, existing)
         accounts.append(acct)
 
+# Discrete Events
+st.subheader("Discrete Events")
+st.caption("One-time financial events (e.g. home purchase, inheritance, Social Security start)")
+
+n_events = st.number_input(
+    "Number of Events", min_value=0, max_value=20, value=len(plan.discrete_events), key="n_events"
+)
+
+events: list[DiscreteEvent] = []
+for i in range(int(n_events)):
+    existing_ev = plan.discrete_events[i] if i < len(plan.discrete_events) else DiscreteEvent(
+        age=65.0, amount=0.0, description=""
+    )
+    with st.expander(f"Event {i + 1}: {existing_ev.description or 'New Event'}", expanded=True):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            ev_age = st.number_input(
+                "Age", min_value=18.0, max_value=120.0,
+                value=existing_ev.age, step=0.5, key=f"ev_age_{i}",
+            )
+        with col2:
+            ev_amount = st.number_input(
+                "Amount ($)",
+                value=existing_ev.amount, step=1000.0, key=f"ev_amount_{i}",
+                help="Positive = inflow, Negative = outflow",
+            )
+        with col3:
+            ev_desc = st.text_input(
+                "Description", value=existing_ev.description, key=f"ev_desc_{i}",
+            )
+        events.append(DiscreteEvent(age=ev_age, amount=ev_amount, description=ev_desc))
+
 if st.button("Save Plan", type="primary"):
     try:
         new_plan = PlanConfig(
@@ -72,6 +113,8 @@ if st.button("Save Plan", type="primary"):
             monthly_income=monthly_income,
             monthly_spending=monthly_spending,
             income_end_age=int(income_end_age),
+            income_growth_rate=income_growth_rate / 100,
+            discrete_events=events,
         )
         st.session_state["plan"] = new_plan
         st.success("Plan saved!")

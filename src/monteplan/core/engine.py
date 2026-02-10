@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from monteplan import __version__
 from monteplan.config.schema import (
     MarketAssumptions,
     PlanConfig,
@@ -15,12 +16,21 @@ from monteplan.config.schema import (
 from monteplan.core.rng import make_rng
 from monteplan.core.state import SimulationState
 from monteplan.core.timeline import Timeline
+from monteplan.io.serialize import compute_config_hash
 from monteplan.models.inflation import OUInflationModel
-from monteplan.models.returns.mvn import MultivariateNormalReturns
+from monteplan.models.returns.bootstrap import HistoricalBootstrapReturns
+from monteplan.models.returns.mvn import MultivariateNormalReturns, StudentTReturns
+from monteplan.models.stress import apply_stress_scenarios
 from monteplan.policies.contributions import apply_contributions, compute_monthly_contributions
+from monteplan.policies.rebalancing import rebalance_to_targets
 from monteplan.policies.spending.constant_real import ConstantRealSpending
+from monteplan.policies.spending.guardrails import GuardrailsSpending
 from monteplan.policies.spending.percent_of_portfolio import PercentOfPortfolioSpending
+from monteplan.policies.spending.vpw import VPWSpending
 from monteplan.policies.withdrawals import withdraw
+from monteplan.taxes.rmd import RMDCalculator
+from monteplan.taxes.simple import FlatTaxModel
+from monteplan.taxes.us_federal import USFederalTaxModel
 
 
 @dataclass
@@ -37,6 +47,8 @@ class SimulationResult:
     market: MarketAssumptions
     policies: PolicyBundle
     sim_config: SimulationConfig
+    config_hash: str = ""
+    engine_version: str = ""
     all_paths: np.ndarray | None = field(default=None, repr=False)
 
 
@@ -70,8 +82,20 @@ def simulate(
     n_steps = timeline.n_steps
 
     # Pre-generate all returns and inflation upfront
-    return_model = MultivariateNormalReturns(market)
-    returns = return_model.sample(n_paths, n_steps, rng)  # (n_paths, n_steps, n_assets)
+    if market.return_model == "student_t":
+        return_model_obj: (
+            MultivariateNormalReturns | StudentTReturns | HistoricalBootstrapReturns
+        ) = StudentTReturns(market)
+    elif market.return_model == "bootstrap":
+        if market.historical_returns is None:
+            raise ValueError("historical_returns must be provided for bootstrap model")
+        return_model_obj = HistoricalBootstrapReturns(
+            np.array(market.historical_returns),
+            block_size=market.bootstrap_block_size,
+        )
+    else:
+        return_model_obj = MultivariateNormalReturns(market)
+    returns = return_model_obj.sample(n_paths, n_steps, rng)  # (n_paths, n_steps, n_assets)
 
     inflation_model = OUInflationModel(
         theta=market.inflation_mean,
@@ -79,25 +103,67 @@ def simulate(
     )
     inflation_rates = inflation_model.sample(n_paths, n_steps, rng)  # (n_paths, n_steps)
 
-    # Compute portfolio-weighted blended monthly return for each path/step
-    weights = np.array([a.weight for a in market.assets])
-    blended_returns = (returns * weights).sum(axis=2)  # (n_paths, n_steps)
+    # Apply stress scenario overlays (before main loop)
+    if sim_config.stress_scenarios:
+        returns, inflation_rates = apply_stress_scenarios(
+            returns,
+            inflation_rates,
+            sim_config.stress_scenarios,
+            timeline,
+        )
 
-    # Initialize state
+    # Target asset weights (static or glide path)
+    static_weights = np.array([a.weight for a in market.assets])
+    glide_path = market.glide_path
+    if glide_path is not None:
+        gp_start_weights = np.array(glide_path.start_weights)
+        gp_end_weights = np.array(glide_path.end_weights)
+        gp_start_age = glide_path.start_age
+        gp_end_age = glide_path.end_age
+    weights = static_weights
+
+    # Initialize state with per-asset-per-account positions
     initial_balances = [a.balance for a in plan.accounts]
     account_types: list[str] = [a.account_type for a in plan.accounts]
-    state = SimulationState.initialize(n_paths, initial_balances, account_types)
+    state = SimulationState.initialize(n_paths, initial_balances, account_types, weights)
+    state.initial_portfolio_value = state.total_wealth.copy()
 
     # Prepare policies
     monthly_contributions = compute_monthly_contributions(
         [a.annual_contribution for a in plan.accounts]
     )
 
-    spending_policy: ConstantRealSpending | PercentOfPortfolioSpending
+    spending_policy: (
+        ConstantRealSpending | PercentOfPortfolioSpending | GuardrailsSpending | VPWSpending
+    )
     if policies.spending.policy_type == "constant_real":
         spending_policy = ConstantRealSpending(plan.monthly_spending)
-    else:
+    elif policies.spending.policy_type == "percent_of_portfolio":
         spending_policy = PercentOfPortfolioSpending(policies.spending.withdrawal_rate)
+    elif policies.spending.policy_type == "guardrails":
+        spending_policy = GuardrailsSpending(policies.spending.guardrails)
+    else:
+        spending_policy = VPWSpending(policies.spending.vpw, plan.end_age, plan.current_age)
+
+    # Build tax model
+    tax_model: FlatTaxModel | USFederalTaxModel
+    if policies.tax_model == "us_federal":
+        tax_model = USFederalTaxModel()
+    else:
+        tax_model = FlatTaxModel(policies.tax_rate)
+    effective_tax_rate = tax_model.tax_rate_traditional()
+    rmd_calc = RMDCalculator()
+
+    # Pre-compute discrete event steps
+    event_steps: dict[int, float] = {}
+    for ev in plan.discrete_events:
+        ev_step = int(round((ev.age - plan.current_age) * 12))
+        if 0 <= ev_step < n_steps:
+            event_steps[ev_step] = event_steps.get(ev_step, 0.0) + ev.amount
+
+    # Income growth tracking
+    monthly_income_growth_rate = (1.0 + plan.income_growth_rate) ** (1.0 / 12.0) - 1.0
+    income_growth_factor = 1.0
 
     # Storage for wealth time series
     wealth_history = np.empty((n_paths, n_steps + 1))
@@ -107,40 +173,157 @@ def simulate(
     for t in range(n_steps):
         state.step = t
 
-        # 1. Apply returns to account balances
-        monthly_return = blended_returns[:, t]  # (n_paths,)
-        growth_factor = 1.0 + monthly_return
-        state.balances *= growth_factor[:, np.newaxis]
+        # 1. Apply per-asset returns to positions
+        asset_returns = returns[:, t, :]  # (n_paths, n_assets)
+        asset_growth = 1.0 + asset_returns  # (n_paths, n_assets)
+        state.positions *= asset_growth[:, np.newaxis, :]
 
-        # Ensure no negative balances from returns
-        np.maximum(state.balances, 0.0, out=state.balances)
+        # Ensure no negative positions
+        np.maximum(state.positions, 0.0, out=state.positions)
 
         # 2. Update cumulative inflation
         state.cumulative_inflation *= 1.0 + inflation_rates[:, t]
 
-        # 3. Accumulation phase: add contributions and income
-        if timeline.has_income(t):
-            apply_contributions(state, monthly_contributions)
+        # Compute current target weights (glide path or static)
+        if glide_path is not None:
+            age = timeline.age_at(t)
+            if age <= gp_start_age:
+                current_weights = gp_start_weights
+            elif age >= gp_end_age:
+                current_weights = gp_end_weights
+            else:
+                frac = (age - gp_start_age) / (gp_end_age - gp_start_age)
+                current_weights = gp_start_weights + frac * (gp_end_weights - gp_start_weights)
+        else:
+            current_weights = static_weights
 
-        # 4. Retirement phase: compute spending, withdraw, apply taxes
+        # 3. Accumulation phase: add contributions with income growth
+        if timeline.has_income(t):
+            apply_contributions(
+                state,
+                monthly_contributions,
+                current_weights,
+                income_growth_factor,
+            )
+            income_growth_factor *= 1.0 + monthly_income_growth_rate
+
+        # 4. Apply discrete events
+        if t in event_steps:
+            event_amount = event_steps[t]
+            if event_amount > 0:
+                # Inflow: distribute pro-rata across accounts by current balance
+                total = state.total_wealth
+                safe_total = np.where(total > 0, total, 1.0)
+                for acct_idx in range(state.n_accounts):
+                    acct_bal = state.balances[:, acct_idx]
+                    share = acct_bal / safe_total
+                    state.positions[:, acct_idx, :] += (
+                        event_amount * share[:, np.newaxis] * current_weights[np.newaxis, :]
+                    )
+            else:
+                # Outflow: withdraw pro-rata across accounts
+                withdraw(
+                    state,
+                    np.full(n_paths, -event_amount),
+                    list(policies.withdrawal_order),
+                    effective_tax_rate,
+                )
+
+        # 5. Calendar rebalancing
+        month = timeline.month_of_year(t)
+        if month in policies.rebalancing_months:
+            rebalance_to_targets(state, current_weights)
+
+        # 6. Retirement phase: compute spending, withdraw, apply taxes
         if timeline.is_retired(t):
             spending_need = spending_policy.compute(state)
 
             # Only withdraw for non-depleted paths
             spending_need = np.where(state.is_depleted, 0.0, spending_need)
 
+            # Track traditional balance before withdrawal to compute ordinary income
+            trad_indices = [i for i, tp in enumerate(state.account_types) if tp == "traditional"]
+            trad_before = (
+                sum(state.balances[:, i] for i in trad_indices)
+                if trad_indices
+                else np.zeros(n_paths)
+            )
+
             withdrawal_order: list[str] = list(policies.withdrawal_order)
             withdraw(
                 state,
                 spending_need,
                 withdrawal_order,
-                policies.tax_rate,
+                effective_tax_rate,
             )
 
-        # 5. Update depletion status
+            # Accumulate ordinary income from traditional withdrawals
+            if trad_indices:
+                trad_after = sum(state.balances[:, i] for i in trad_indices)
+                trad_withdrawn = trad_before - trad_after
+                state.annual_ordinary_income += np.maximum(trad_withdrawn, 0.0)
+
+            # Track traditional withdrawn for RMD satisfaction
+            if trad_indices:
+                state.annual_rmd_satisfied += np.maximum(trad_withdrawn, 0.0)
+
+            # RMD enforcement: force additional withdrawals if RMD not met
+            age_int = int(timeline.age_at(t))
+            if age_int >= rmd_calc.start_age and trad_indices and month == 12:
+                rmd_required = rmd_calc.compute_rmd(
+                    age_int,
+                    state.prior_year_traditional_balance,
+                )
+                rmd_shortfall = np.maximum(rmd_required - state.annual_rmd_satisfied, 0.0)
+                mask = rmd_shortfall > 0
+                if mask.any():
+                    # Force withdraw from traditional only
+                    for idx in trad_indices:
+                        available = state.positions[:, idx, :].sum(axis=1)
+                        force_withdraw = np.minimum(rmd_shortfall, available)
+                        force_withdraw = np.where(mask, force_withdraw, 0.0)
+                        safe_avail = np.where(available > 0, available, 1.0)
+                        frac_arr = np.minimum(force_withdraw / safe_avail, 1.0)
+                        state.positions[:, idx, :] *= 1.0 - frac_arr[:, np.newaxis]
+                        state.annual_ordinary_income += force_withdraw
+                        rmd_shortfall -= force_withdraw
+
+        # 7. Year-end annual tax computation (for US federal model)
+        if policies.tax_model == "us_federal" and month == 12:
+            # Compute annual tax for each path and deduct from accounts
+            for p_idx in range(n_paths):
+                if state.is_depleted[p_idx]:
+                    continue
+                annual_tax = tax_model.compute_annual_tax(
+                    float(state.annual_ordinary_income[p_idx]),
+                    float(state.annual_ltcg[p_idx]),
+                    policies.filing_status,
+                )
+                if annual_tax > 0:
+                    # Deduct tax pro-rata from all accounts
+                    total_w = float(state.total_wealth[p_idx])
+                    if total_w > 0:
+                        tax_frac = min(annual_tax / total_w, 1.0)
+                        state.positions[p_idx, :, :] *= 1.0 - tax_frac
+            # Snapshot traditional balance for next year's RMD
+            trad_indices_yr = [
+                i for i, tp in enumerate(state.account_types) if tp == "traditional"
+            ]
+            if trad_indices_yr:
+                trad_sum = np.zeros(n_paths)
+                for i in trad_indices_yr:
+                    trad_sum += state.balances[:, i]
+                state.prior_year_traditional_balance = trad_sum
+
+            # Reset annual accumulators
+            state.annual_ordinary_income[:] = 0.0
+            state.annual_ltcg[:] = 0.0
+            state.annual_rmd_satisfied[:] = 0.0
+
+        # 8. Update depletion status
         state.is_depleted = state.total_wealth <= 0.0
 
-        # 6. Record wealth snapshot
+        # 9. Record wealth snapshot
         wealth_history[:, t + 1] = state.total_wealth
 
     # Compute results
@@ -175,5 +358,7 @@ def simulate(
         market=market,
         policies=policies,
         sim_config=sim_config,
+        config_hash=compute_config_hash(plan, market, policies, sim_config),
+        engine_version=__version__,
         all_paths=wealth_history if sim_config.store_paths else None,
     )

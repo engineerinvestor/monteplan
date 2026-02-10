@@ -24,9 +24,10 @@ st.markdown(
 
     ### How it works
 
-    1. **Plan Setup** — Enter your age, income, spending, and account balances
-    2. **Portfolio** — Set your asset allocation and market assumptions
+    1. **Plan Setup** — Enter your age, income, spending, accounts, and life events
+    2. **Portfolio** — Set asset allocation, return model, glide path, and stress scenarios
     3. **Run & Results** — Run the simulation and explore the results
+    4. **Policies** — Configure spending policy, tax model, withdrawal order, and rebalancing
 
     ---
 

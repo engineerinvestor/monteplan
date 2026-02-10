@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -11,6 +12,27 @@ from monteplan.config.schema import (
     PolicyBundle,
     SimulationConfig,
 )
+
+
+def compute_config_hash(
+    plan: PlanConfig,
+    market: MarketAssumptions,
+    policies: PolicyBundle,
+    sim_config: SimulationConfig,
+) -> str:
+    """Compute a deterministic SHA-256 hash of all configs.
+
+    Uses canonical JSON (sorted keys, no whitespace) so the same
+    logical config always produces the same hash.
+    """
+    data = {
+        "plan": plan.model_dump(),
+        "market": market.model_dump(),
+        "policies": policies.model_dump(),
+        "simulation": sim_config.model_dump(),
+    }
+    canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def dump_config(

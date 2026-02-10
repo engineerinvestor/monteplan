@@ -8,7 +8,7 @@ from monteplan.config.defaults import (
     default_policies,
     default_sim_config,
 )
-from monteplan.io.serialize import dump_config, load_config
+from monteplan.io.serialize import compute_config_hash, dump_config, load_config
 
 
 class TestSerialize:
@@ -37,3 +37,27 @@ class TestSerialize:
         assert plan.current_age == 30
         assert len(market.assets) == 2
         assert sim.n_paths == 5000
+
+    def test_config_hash_deterministic(self) -> None:
+        """Same config should always produce the same hash."""
+        plan = default_plan()
+        market = default_market()
+        policies = default_policies()
+        sim = default_sim_config()
+
+        h1 = compute_config_hash(plan, market, policies, sim)
+        h2 = compute_config_hash(plan, market, policies, sim)
+        assert h1 == h2
+        assert len(h1) == 64  # SHA-256 hex digest
+
+    def test_config_hash_changes_with_config(self) -> None:
+        """Different configs should produce different hashes."""
+        plan = default_plan()
+        market = default_market()
+        policies = default_policies()
+        sim1 = default_sim_config()
+        sim2 = sim1.model_copy(update={"seed": 99})
+
+        h1 = compute_config_hash(plan, market, policies, sim1)
+        h2 = compute_config_hash(plan, market, policies, sim2)
+        assert h1 != h2

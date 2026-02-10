@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from numpy.random import PCG64DXSM, Generator
 
 from monteplan.config.schema import AssetClass, MarketAssumptions
-from monteplan.models.returns.mvn import MultivariateNormalReturns
+from monteplan.models.returns.mvn import MultivariateNormalReturns, StudentTReturns
 
 
 @pytest.fixture
@@ -30,8 +31,6 @@ class TestMVN:
 
     def test_sample_means_close_to_expected(self, market: MarketAssumptions) -> None:
         """With 100k samples, means should be within 1% of expected."""
-        from numpy.random import PCG64DXSM, Generator
-
         rng = Generator(PCG64DXSM(123))
         model = MultivariateNormalReturns(market)
         # 100k paths, 1 step
@@ -42,8 +41,6 @@ class TestMVN:
 
     def test_sample_vols_close_to_expected(self, market: MarketAssumptions) -> None:
         """With 100k samples, vols should be within 2% of expected."""
-        from numpy.random import PCG64DXSM, Generator
-
         rng = Generator(PCG64DXSM(456))
         model = MultivariateNormalReturns(market)
         result = model.sample(100_000, 1, rng)
@@ -53,8 +50,6 @@ class TestMVN:
 
     def test_correlation_close_to_expected(self, market: MarketAssumptions) -> None:
         """With 100k samples, correlation should be within 0.05."""
-        from numpy.random import PCG64DXSM, Generator
-
         rng = Generator(PCG64DXSM(789))
         model = MultivariateNormalReturns(market)
         result = model.sample(100_000, 1, rng)
@@ -62,9 +57,65 @@ class TestMVN:
         assert abs(sample_corr - 0.2) < 0.05
 
     def test_deterministic_with_same_seed(self, market: MarketAssumptions) -> None:
-        from numpy.random import PCG64DXSM, Generator
-
         model = MultivariateNormalReturns(market)
+        r1 = model.sample(10, 5, Generator(PCG64DXSM(42)))
+        r2 = model.sample(10, 5, Generator(PCG64DXSM(42)))
+        np.testing.assert_array_equal(r1, r2)
+
+
+class TestStudentT:
+    def test_output_shape(self) -> None:
+        market = MarketAssumptions(
+            assets=[AssetClass(name="S", weight=0.6), AssetClass(name="B", weight=0.4)],
+            expected_annual_returns=[0.08, 0.03],
+            annual_volatilities=[0.16, 0.05],
+            correlation_matrix=[[1.0, 0.2], [0.2, 1.0]],
+            return_model="student_t",
+            degrees_of_freedom=5.0,
+        )
+        model = StudentTReturns(market)
+        result = model.sample(100, 12, Generator(PCG64DXSM(42)))
+        assert result.shape == (100, 12, 2)
+
+    def test_fatter_tails_than_normal(self) -> None:
+        """Student-t should produce more extreme returns than normal."""
+        market_mvn = MarketAssumptions(
+            assets=[AssetClass(name="S", weight=1.0)],
+            expected_annual_returns=[0.08],
+            annual_volatilities=[0.16],
+            correlation_matrix=[[1.0]],
+        )
+        market_t = MarketAssumptions(
+            assets=[AssetClass(name="S", weight=1.0)],
+            expected_annual_returns=[0.08],
+            annual_volatilities=[0.16],
+            correlation_matrix=[[1.0]],
+            return_model="student_t",
+            degrees_of_freedom=4.0,
+        )
+        mvn = MultivariateNormalReturns(market_mvn)
+        t_model = StudentTReturns(market_t)
+
+        mvn_samples = mvn.sample(100_000, 1, Generator(PCG64DXSM(42)))
+        t_samples = t_model.sample(100_000, 1, Generator(PCG64DXSM(42)))
+
+        # Student-t should have higher kurtosis (fatter tails)
+        from scipy.stats import kurtosis
+
+        mvn_kurt = kurtosis(mvn_samples[:, 0, 0])
+        t_kurt = kurtosis(t_samples[:, 0, 0])
+        assert t_kurt > mvn_kurt
+
+    def test_deterministic(self) -> None:
+        market = MarketAssumptions(
+            assets=[AssetClass(name="S", weight=1.0)],
+            expected_annual_returns=[0.08],
+            annual_volatilities=[0.16],
+            correlation_matrix=[[1.0]],
+            return_model="student_t",
+            degrees_of_freedom=5.0,
+        )
+        model = StudentTReturns(market)
         r1 = model.sample(10, 5, Generator(PCG64DXSM(42)))
         r2 = model.sample(10, 5, Generator(PCG64DXSM(42)))
         np.testing.assert_array_equal(r1, r2)

@@ -48,6 +48,8 @@ def run_simulation(
         "n_paths": result.n_paths,
         "n_steps": result.n_steps,
         "seed": result.seed,
+        "config_hash": result.config_hash,
+        "engine_version": result.engine_version,
         "plan_current_age": plan.current_age,
         "plan_retirement_age": plan.retirement_age,
         "plan_end_age": plan.end_age,
@@ -62,15 +64,37 @@ sim_config: SimulationConfig = st.session_state.get("sim_config", default_sim_co
 
 # Show current config summary
 with st.expander("Current Configuration"):
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        st.write(f"**Ages:** {plan.current_age} → {plan.retirement_age} → {plan.end_age}")
-        st.write(f"**Monthly Spending:** ${plan.monthly_spending:,.0f}")
-        st.write(f"**Accounts:** {len(plan.accounts)}")
+        st.markdown("**Plan**")
+        st.write(f"Ages: {plan.current_age} → {plan.retirement_age} → {plan.end_age}")
+        st.write(f"Monthly Spending: ${plan.monthly_spending:,.0f}")
+        st.write(f"Monthly Income: ${plan.monthly_income:,.0f}")
+        st.write(f"Accounts: {len(plan.accounts)}")
+        if plan.income_growth_rate != 0:
+            st.write(f"Income Growth: {plan.income_growth_rate:.1%}/yr")
+        if plan.discrete_events:
+            st.write(f"Discrete Events: {len(plan.discrete_events)}")
     with col2:
-        st.write(f"**Paths:** {sim_config.n_paths:,}")
-        st.write(f"**Seed:** {sim_config.seed}")
-        st.write(f"**Spending Policy:** {policies.spending.policy_type}")
+        st.markdown("**Portfolio & Market**")
+        st.write(f"Allocation: {market.assets[0].weight:.0%} / {market.assets[1].weight:.0%}")
+        st.write(f"Return Model: {market.return_model}")
+        if market.glide_path:
+            st.write(
+                f"Glide Path: {market.glide_path.start_weights[0]:.0%} → "
+                f"{market.glide_path.end_weights[0]:.0%} stocks"
+            )
+        if sim_config.stress_scenarios:
+            st.write(f"Stress Scenarios: {len(sim_config.stress_scenarios)}")
+    with col3:
+        st.markdown("**Policies & Simulation**")
+        st.write(f"Spending: {policies.spending.policy_type}")
+        st.write(f"Tax Model: {policies.tax_model}")
+        if policies.tax_model == "us_federal":
+            st.write(f"Filing: {policies.filing_status.replace('_', ' ').title()}")
+        else:
+            st.write(f"Tax Rate: {policies.tax_rate:.0%}")
+        st.write(f"Paths: {sim_config.n_paths:,} | Seed: {sim_config.seed}")
 
 if st.button("Run Simulation", type="primary"):
     # Serialize configs for cache key
@@ -100,7 +124,6 @@ if "result_data" in st.session_state:
     # Fan chart
     st.subheader("Portfolio Value Over Time")
     from app.components.charts import fan_chart
-    from monteplan.core.engine import SimulationResult as _SR
 
     import numpy as np
 
@@ -120,6 +143,17 @@ if "result_data" in st.session_state:
     chart_result = _ChartResult(data)
     fig = fan_chart(chart_result)  # type: ignore[arg-type]
     st.plotly_chart(fig, use_container_width=True)
+
+    # Simulation metadata
+    with st.expander("Simulation Details"):
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**Paths:** {data['n_paths']:,}")
+            st.write(f"**Steps:** {data['n_steps']:,}")
+            st.write(f"**Seed:** {data['seed']}")
+        with col2:
+            st.write(f"**Engine Version:** {data.get('engine_version', 'N/A')}")
+            st.write(f"**Config Hash:** `{data.get('config_hash', 'N/A')[:12]}...`")
 
     # Downloads
     st.subheader("Export")

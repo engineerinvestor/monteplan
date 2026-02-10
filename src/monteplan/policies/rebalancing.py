@@ -13,19 +13,16 @@ def rebalance_to_targets(
 ) -> None:
     """Rebalance all accounts to target allocation weights.
 
-    In v0.1, each account holds the full portfolio blend (not per-asset).
-    Rebalancing redistributes total wealth across accounts proportional to
-    their current share of total wealth, maintaining the same total.
-
-    This is effectively a no-op for portfolio returns since we apply a
-    blended return. The real rebalancing (drift-aware, per-asset-per-account)
-    comes in v0.2. Keeping the function as a hook point.
+    For each account, redistributes positions across assets so that
+    the dollar allocation matches ``target_weights`` while preserving
+    the total account balance. Vectorized across all paths.
 
     Args:
-        state: Current simulation state.
-        target_weights: Target asset weights (not used in v0.1 — implicit).
+        state: Current simulation state (positions will be mutated).
+        target_weights: (n_assets,) target allocation weights summing to 1.
     """
-    # In v0.1, rebalancing is implicit: we always apply portfolio-weighted
-    # blended returns, so accounts are always "at target." This function
-    # exists as a hook for v0.2.
-    pass
+    # balances shape: (n_paths, n_accounts)
+    balances = state.balances
+    # target positions: balances[:, :, np.newaxis] * target_weights
+    # → (n_paths, n_accounts, n_assets)
+    state.positions = balances[:, :, np.newaxis] * target_weights[np.newaxis, np.newaxis, :]

@@ -18,8 +18,10 @@ def withdraw(
     For traditional accounts, gross up the withdrawal to cover taxes:
     to get $X after tax, withdraw $X / (1 - tax_rate).
 
+    Positions are reduced pro-rata across assets within each account.
+
     Args:
-        state: Current simulation state (balances will be mutated).
+        state: Current simulation state (positions will be mutated).
         amount_needed: (n_paths,) after-tax spending needed.
         withdrawal_order: Priority list of account types.
         tax_rate: Flat effective tax rate on traditional withdrawals.
@@ -32,24 +34,21 @@ def withdraw(
     total_withdrawn_after_tax = np.zeros(state.n_paths)
 
     for acct_type in withdrawal_order:
-        # Find accounts of this type
         indices = [i for i, t in enumerate(state.account_types) if t == acct_type]
         if not indices:
             continue
 
         for idx in indices:
-            available = state.balances[:, idx]
+            # Account balance = sum of positions across assets
+            available = state.positions[:, idx, :].sum(axis=1)  # (n_paths,)
             done = remaining <= 0
 
             if acct_type == "traditional":
-                # Need to withdraw more to cover taxes
                 gross_factor = 1.0 / (1.0 - tax_rate)
                 gross_needed = remaining * gross_factor
                 gross_withdraw = np.minimum(gross_needed, available)
                 after_tax = gross_withdraw * (1.0 - tax_rate)
             else:
-                # Taxable and Roth: no additional tax on withdrawal
-                # (simplified: ignoring capital gains on taxable)
                 gross_withdraw = np.minimum(remaining, available)
                 after_tax = gross_withdraw
 
@@ -57,7 +56,14 @@ def withdraw(
             gross_withdraw = np.where(done, 0.0, gross_withdraw)
             after_tax = np.where(done, 0.0, after_tax)
 
-            state.balances[:, idx] -= gross_withdraw
+            # Pro-rata reduce positions across assets
+            # fraction = gross_withdraw / available (avoid divide-by-zero)
+            safe_available = np.where(available > 0, available, 1.0)
+            frac = gross_withdraw / safe_available  # fraction of account to sell
+            frac = np.minimum(frac, 1.0)  # cap at 100%
+            # positions[:, idx, :] *= (1 - frac[:, np.newaxis])
+            state.positions[:, idx, :] *= 1.0 - frac[:, np.newaxis]
+
             remaining -= after_tax
             total_withdrawn_after_tax += after_tax
 

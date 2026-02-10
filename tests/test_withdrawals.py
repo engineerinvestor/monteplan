@@ -12,15 +12,20 @@ def _make_state(
     balances: list[list[float]],
     account_types: list[str],
 ) -> SimulationState:
+    """Create a state with positions from balances (single-asset for simplicity)."""
     n_paths = len(balances)
     bal = np.array(balances, dtype=float)
+    n_accounts = bal.shape[1]
+    # Use single asset so positions[:, :, 0] == balances
+    positions = bal[:, :, np.newaxis]  # (n_paths, n_accounts, 1)
     return SimulationState(
-        balances=bal,
+        positions=positions,
         cumulative_inflation=np.ones(n_paths),
         is_depleted=np.zeros(n_paths, dtype=bool),
         step=0,
         n_paths=n_paths,
-        n_accounts=bal.shape[1],
+        n_accounts=n_accounts,
+        n_assets=1,
         account_types=account_types,
     )
 
@@ -88,3 +93,28 @@ class TestWithdrawals:
         need = np.array([5_000.0, 5_000.0])
         got = withdraw(state, need, ["taxable", "traditional"], tax_rate=0.20)
         np.testing.assert_allclose(got, [5_000.0, 5_000.0])
+
+    def test_pro_rata_selling(self) -> None:
+        """Withdrawal should reduce positions pro-rata across assets."""
+        n_paths = 1
+        # 2 accounts, 2 assets: taxable has 60k stocks + 40k bonds
+        positions = np.array([[[60_000.0, 40_000.0], [50_000.0, 50_000.0]]])
+        state = SimulationState(
+            positions=positions,
+            cumulative_inflation=np.ones(n_paths),
+            is_depleted=np.zeros(n_paths, dtype=bool),
+            step=0,
+            n_paths=n_paths,
+            n_accounts=2,
+            n_assets=2,
+            account_types=["taxable", "traditional"],
+        )
+        # Withdraw 50k from taxable (50% of 100k account)
+        need = np.array([50_000.0])
+        withdraw(state, need, ["taxable", "traditional"], tax_rate=0.22)
+        # Taxable should have 50% of original positions
+        np.testing.assert_allclose(state.positions[0, 0, 0], 30_000.0)
+        np.testing.assert_allclose(state.positions[0, 0, 1], 20_000.0)
+        # Traditional untouched
+        np.testing.assert_allclose(state.positions[0, 1, 0], 50_000.0)
+        np.testing.assert_allclose(state.positions[0, 1, 1], 50_000.0)

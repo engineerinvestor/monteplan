@@ -15,16 +15,20 @@ def _make_state(
 ) -> SimulationState:
     n_paths = len(balances)
     bal = np.array(balances)
+    n_accounts = bal.shape[1]
     if cumulative_inflation is None:
         cumulative_inflation = [1.0] * n_paths
+    # Single-asset positions: (n_paths, n_accounts, 1)
+    positions = bal[:, :, np.newaxis]
     return SimulationState(
-        balances=bal,
+        positions=positions,
         cumulative_inflation=np.array(cumulative_inflation),
         is_depleted=np.zeros(n_paths, dtype=bool),
         step=0,
         n_paths=n_paths,
-        n_accounts=bal.shape[1],
-        account_types=["taxable"] * bal.shape[1],
+        n_accounts=n_accounts,
+        n_assets=1,
+        account_types=["taxable"] * n_accounts,
     )
 
 

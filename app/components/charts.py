@@ -57,6 +57,18 @@ def fan_chart(result: SimulationResult) -> go.Figure:
         )
     )
 
+    # Mean line
+    if "mean" in ts:
+        fig.add_trace(
+            go.Scatter(
+                x=ages,
+                y=ts["mean"],
+                mode="lines",
+                line=dict(color="rgb(99, 110, 250)", width=1, dash="dot"),
+                name="Mean",
+            )
+        )
+
     # Retirement line
     fig.add_vline(
         x=result.plan.retirement_age,

@@ -2,22 +2,28 @@
 
 from __future__ import annotations
 
+import numpy as np
+
 from monteplan.core.state import SimulationState
 
 
 def apply_contributions(
     state: SimulationState,
     monthly_contributions: list[float],
+    target_weights: np.ndarray,
+    growth_factor: float = 1.0,
 ) -> None:
-    """Add fixed monthly contributions to each account.
+    """Add monthly contributions to each account, allocated by target weights.
 
     Args:
-        state: Current simulation state (balances will be mutated).
-        monthly_contributions: Monthly contribution for each account.
+        state: Current simulation state (positions will be mutated).
+        monthly_contributions: Base monthly contribution for each account.
+        target_weights: (n_assets,) target asset allocation weights.
+        growth_factor: Cumulative income growth factor (1.0 = no growth).
     """
     for i, contrib in enumerate(monthly_contributions):
         if contrib > 0:
-            state.balances[:, i] += contrib
+            state.positions[:, i, :] += contrib * growth_factor * target_weights
 
 
 def compute_monthly_contributions(annual_contributions: list[float]) -> list[float]:

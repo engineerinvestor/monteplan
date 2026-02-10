@@ -1,16 +1,16 @@
-"""Portfolio page — asset allocation and market assumptions."""
+"""Portfolio page — asset allocation, market assumptions, return model, stress scenarios."""
 
 from __future__ import annotations
 
 import streamlit as st
 
-from monteplan.config.defaults import default_market, default_policies, default_sim_config
+from monteplan.config.defaults import default_market, default_sim_config
 from monteplan.config.schema import (
     AssetClass,
+    GlidePath,
     MarketAssumptions,
-    PolicyBundle,
     SimulationConfig,
-    SpendingPolicyConfig,
+    StressScenario,
 )
 
 st.set_page_config(page_title="Portfolio — MontePlan", layout="wide")
@@ -19,16 +19,13 @@ st.title("Portfolio & Assumptions")
 # Initialize defaults
 if "market" not in st.session_state:
     st.session_state["market"] = default_market()
-if "policies" not in st.session_state:
-    st.session_state["policies"] = default_policies()
 if "sim_config" not in st.session_state:
     st.session_state["sim_config"] = default_sim_config()
 
 market: MarketAssumptions = st.session_state["market"]
-policies: PolicyBundle = st.session_state["policies"]
 sim_config: SimulationConfig = st.session_state["sim_config"]
 
-# Asset allocation
+# --- Asset Allocation ---
 st.subheader("Asset Allocation")
 stock_weight = st.slider(
     "Stock Allocation (%)",
@@ -40,7 +37,38 @@ stock_weight = st.slider(
 bond_weight = 100 - stock_weight
 st.write(f"Bond Allocation: {bond_weight}%")
 
-# Market assumptions in expander
+# Glide Path
+use_glide = st.checkbox(
+    "Enable Glide Path (age-based allocation shift)",
+    value=market.glide_path is not None,
+)
+gp_start_age = 30
+gp_end_age = 70
+gp_end_stock = 40
+if use_glide:
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        gp_start_age = st.number_input(
+            "Glide Start Age", min_value=18, max_value=120,
+            value=market.glide_path.start_age if market.glide_path else 30,
+        )
+    with col2:
+        gp_end_age = st.number_input(
+            "Glide End Age", min_value=gp_start_age + 1, max_value=120,
+            value=market.glide_path.end_age if market.glide_path else 70,
+        )
+    with col3:
+        gp_end_stock = st.slider(
+            "End Stock Allocation (%)",
+            min_value=0, max_value=100, step=5,
+            value=int(market.glide_path.end_weights[0] * 100) if market.glide_path else 40,
+        )
+    st.caption(
+        f"Allocation shifts from {stock_weight}% stocks at age {gp_start_age} "
+        f"to {gp_end_stock}% stocks at age {gp_end_age}"
+    )
+
+# --- Market Assumptions ---
 with st.expander("Market Assumptions", expanded=False):
     col1, col2 = st.columns(2)
     with col1:
@@ -79,34 +107,74 @@ with st.expander("Market Assumptions", expanded=False):
         step=0.25,
     )
 
-# Spending policy
-st.subheader("Spending Policy")
-policy_type = st.selectbox(
-    "Policy",
-    ["constant_real", "percent_of_portfolio"],
-    index=0 if policies.spending.policy_type == "constant_real" else 1,
+# --- Return Model ---
+st.subheader("Return Model")
+return_model_options = ["mvn", "student_t"]
+return_model_labels = {
+    "mvn": "Multivariate Normal",
+    "student_t": "Student-t (fat tails)",
+}
+return_model = st.selectbox(
+    "Return Distribution",
+    return_model_options,
+    index=return_model_options.index(market.return_model) if market.return_model in return_model_options else 0,
+    format_func=lambda x: return_model_labels.get(x, x),
 )
 
-withdrawal_rate = policies.spending.withdrawal_rate
-if policy_type == "percent_of_portfolio":
-    withdrawal_rate = st.number_input(
-        "Annual Withdrawal Rate (%)",
-        value=policies.spending.withdrawal_rate * 100,
-        step=0.5,
-        min_value=0.1,
+degrees_of_freedom: float | None = market.degrees_of_freedom
+if return_model == "student_t":
+    degrees_of_freedom = st.number_input(
+        "Degrees of Freedom",
+        min_value=2.1,
         max_value=100.0,
-    ) / 100
+        value=market.degrees_of_freedom or 5.0,
+        step=0.5,
+        help="Lower values = fatter tails. Typical range: 4-8.",
+    )
 
-# Tax rate
-tax_rate = st.number_input(
-    "Effective Tax Rate (%)",
-    value=policies.tax_rate * 100,
-    step=1.0,
-    min_value=0.0,
-    max_value=100.0,
-) / 100
+# --- Stress Scenarios ---
+st.subheader("Stress Scenarios")
+st.caption("Deterministic overlays that modify simulation paths for specific market conditions")
 
-# Simulation config
+stress_options = {
+    "crash": "Market Crash (-38% over 12mo, V-shaped recovery)",
+    "lost_decade": "Lost Decade (near-zero real returns)",
+    "high_inflation": "High Inflation (6-8% annualized)",
+    "sequence_risk": "Sequence Risk (poor returns early in retirement)",
+}
+
+existing_scenarios = {s.scenario_type: s for s in sim_config.stress_scenarios}
+selected_scenarios: list[StressScenario] = []
+
+for stype, label in stress_options.items():
+    existing = existing_scenarios.get(stype)
+    enabled = st.checkbox(label, value=existing is not None, key=f"stress_{stype}")
+    if enabled:
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            s_age = st.number_input(
+                "Start Age", min_value=18.0, max_value=120.0,
+                value=existing.start_age if existing else 65.0,
+                step=1.0, key=f"stress_age_{stype}",
+            )
+        with col2:
+            s_dur = st.number_input(
+                "Duration (months)", min_value=1, max_value=360,
+                value=existing.duration_months if existing else (12 if stype == "crash" else 120),
+                key=f"stress_dur_{stype}",
+            )
+        with col3:
+            s_sev = st.number_input(
+                "Severity", min_value=0.1, max_value=3.0,
+                value=existing.severity if existing else 1.0,
+                step=0.1, key=f"stress_sev_{stype}",
+            )
+        selected_scenarios.append(StressScenario(
+            name=stype, scenario_type=stype,
+            start_age=s_age, duration_months=int(s_dur), severity=s_sev,
+        ))
+
+# --- Simulation Settings ---
 st.subheader("Simulation Settings")
 preset = st.radio(
     "Path Count",
@@ -119,8 +187,18 @@ n_paths = preset_map[preset]
 
 seed = st.number_input("Random Seed", value=sim_config.seed, min_value=0)
 
+# --- Save ---
 if st.button("Save Portfolio & Settings", type="primary"):
     try:
+        glide_path: GlidePath | None = None
+        if use_glide:
+            glide_path = GlidePath(
+                start_age=int(gp_start_age),
+                start_weights=[stock_weight / 100, bond_weight / 100],
+                end_age=int(gp_end_age),
+                end_weights=[gp_end_stock / 100, (100 - gp_end_stock) / 100],
+            )
+
         new_market = MarketAssumptions(
             assets=[
                 AssetClass(name="US Stocks", weight=stock_weight / 100),
@@ -134,18 +212,17 @@ if st.button("Save Portfolio & Settings", type="primary"):
             ],
             inflation_mean=inflation_mean / 100,
             inflation_vol=market.inflation_vol,
+            return_model=return_model,
+            degrees_of_freedom=degrees_of_freedom if return_model == "student_t" else None,
+            glide_path=glide_path,
         )
-        new_policies = PolicyBundle(
-            spending=SpendingPolicyConfig(
-                policy_type=policy_type,
-                withdrawal_rate=withdrawal_rate,
-            ),
-            tax_rate=tax_rate,
+        new_sim = SimulationConfig(
+            n_paths=n_paths,
+            seed=int(seed),
+            stress_scenarios=selected_scenarios,
         )
-        new_sim = SimulationConfig(n_paths=n_paths, seed=int(seed))
 
         st.session_state["market"] = new_market
-        st.session_state["policies"] = new_policies
         st.session_state["sim_config"] = new_sim
         st.success("Portfolio & settings saved!")
     except Exception as e:
