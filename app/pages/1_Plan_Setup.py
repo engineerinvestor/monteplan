@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from monteplan.config.defaults import default_plan
-from monteplan.config.schema import AccountConfig, DiscreteEvent, PlanConfig
+from monteplan.config.schema import AccountConfig, DiscreteEvent, GuaranteedIncomeStream, PlanConfig
 
 st.set_page_config(page_title="Plan Setup — MontePlan", layout="wide")
 st.title("Plan Setup")
@@ -71,6 +71,52 @@ for i in range(int(n_accounts)):
         acct = account_form(i, existing)
         accounts.append(acct)
 
+# Guaranteed Income Streams
+st.subheader("Guaranteed Income")
+st.caption("Recurring income streams like Social Security, pensions, and annuities")
+
+n_gi = st.number_input(
+    "Number of Income Streams", min_value=0, max_value=10,
+    value=len(plan.guaranteed_income), key="n_gi",
+)
+
+gi_streams: list[GuaranteedIncomeStream] = []
+for i in range(int(n_gi)):
+    existing_gi = plan.guaranteed_income[i] if i < len(plan.guaranteed_income) else GuaranteedIncomeStream(
+        name="Social Security", monthly_amount=2000, start_age=67,
+    )
+    with st.expander(f"Income {i + 1}: {existing_gi.name}", expanded=True):
+        col1, col2 = st.columns(2)
+        with col1:
+            gi_name = st.text_input("Name", value=existing_gi.name, key=f"gi_name_{i}")
+            gi_amount = st.number_input(
+                "Monthly Amount ($)", value=existing_gi.monthly_amount,
+                step=100.0, min_value=0.0, key=f"gi_amount_{i}",
+            )
+        with col2:
+            gi_start = st.number_input(
+                "Start Age", value=existing_gi.start_age,
+                min_value=18.0, max_value=120.0, step=1.0, key=f"gi_start_{i}",
+            )
+            gi_cola = st.number_input(
+                "COLA (%/yr)", value=existing_gi.cola_rate * 100,
+                min_value=0.0, max_value=10.0, step=0.5, key=f"gi_cola_{i}",
+                help="Annual cost-of-living adjustment (e.g. 2% for SS)",
+            ) / 100
+        gi_has_end = st.checkbox(
+            "Has end age", value=existing_gi.end_age is not None, key=f"gi_has_end_{i}",
+        )
+        gi_end: float | None = None
+        if gi_has_end:
+            gi_end = st.number_input(
+                "End Age", value=existing_gi.end_age or 90.0,
+                min_value=gi_start, max_value=120.0, step=1.0, key=f"gi_end_{i}",
+            )
+        gi_streams.append(GuaranteedIncomeStream(
+            name=gi_name, monthly_amount=gi_amount, start_age=gi_start,
+            cola_rate=gi_cola, end_age=gi_end,
+        ))
+
 # Discrete Events
 st.subheader("Discrete Events")
 st.caption("One-time financial events (e.g. home purchase, inheritance, Social Security start)")
@@ -115,6 +161,7 @@ if st.button("Save Plan", type="primary"):
             income_end_age=int(income_end_age),
             income_growth_rate=income_growth_rate / 100,
             discrete_events=events,
+            guaranteed_income=gi_streams,
         )
         st.session_state["plan"] = new_plan
         st.success("Plan saved!")

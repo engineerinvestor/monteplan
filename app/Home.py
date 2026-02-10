@@ -42,16 +42,66 @@ st.markdown(
     """
 )
 
-if st.button("Quick Start with Defaults", type="primary"):
-    from monteplan.config.defaults import (
-        default_market,
-        default_plan,
-        default_policies,
-        default_sim_config,
-    )
+st.subheader("Quick Start Templates")
 
-    st.session_state["plan"] = default_plan()
-    st.session_state["market"] = default_market()
-    st.session_state["policies"] = default_policies()
-    st.session_state["sim_config"] = default_sim_config()
-    st.success("Defaults loaded! Navigate to Plan Setup to customize, or Run & Results to simulate.")
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    if st.button("Default Plan", type="primary"):
+        from monteplan.config.defaults import (
+            default_market,
+            default_plan,
+            default_policies,
+            default_sim_config,
+        )
+
+        st.session_state["plan"] = default_plan()
+        st.session_state["market"] = default_market()
+        st.session_state["policies"] = default_policies()
+        st.session_state["sim_config"] = default_sim_config()
+        st.success("Defaults loaded!")
+
+with col2:
+    if st.button("FIRE"):
+        from monteplan.config.defaults import (
+            default_market,
+            default_policies,
+            default_sim_config,
+            fire_plan,
+        )
+
+        st.session_state["plan"] = fire_plan()
+        st.session_state["market"] = default_market()
+        st.session_state["policies"] = default_policies()
+        st.session_state["sim_config"] = default_sim_config()
+        st.success("FIRE template loaded!")
+
+with col3:
+    if st.button("Coast FIRE"):
+        from monteplan.config.defaults import (
+            coast_fire_plan,
+            default_market,
+            default_policies,
+            default_sim_config,
+        )
+
+        st.session_state["plan"] = coast_fire_plan()
+        st.session_state["market"] = default_market()
+        st.session_state["policies"] = default_policies()
+        st.session_state["sim_config"] = default_sim_config()
+        st.success("Coast FIRE template loaded!")
+
+with col4:
+    if st.button("Conservative Retiree"):
+        from monteplan.config.defaults import (
+            conservative_retiree_plan,
+            default_market,
+            default_policies,
+            default_sim_config,
+        )
+
+        st.session_state["plan"] = conservative_retiree_plan()
+        st.session_state["market"] = default_market()
+        st.session_state["policies"] = default_policies()
+        st.session_state["sim_config"] = default_sim_config()
+        st.success("Conservative Retiree template loaded!")

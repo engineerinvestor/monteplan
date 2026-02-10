@@ -109,6 +109,38 @@ with st.expander("Market Assumptions", expanded=False):
         step=0.25,
     )
 
+with st.expander("Investment Fees", expanded=False):
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        expense_ratio = st.number_input(
+            "Fund Expense Ratio (%/yr)",
+            value=market.expense_ratio * 100,
+            step=0.05,
+            min_value=0.0,
+            max_value=5.0,
+            help="Weighted average fund expense ratio (e.g. 0.10% for index funds)",
+        ) / 100
+    with col2:
+        aum_fee = st.number_input(
+            "Platform/AUM Fee (%/yr)",
+            value=market.aum_fee * 100,
+            step=0.05,
+            min_value=0.0,
+            max_value=5.0,
+            help="Brokerage or platform fee charged on assets",
+        ) / 100
+    with col3:
+        advisory_fee = st.number_input(
+            "Advisory Fee (%/yr)",
+            value=market.advisory_fee * 100,
+            step=0.05,
+            min_value=0.0,
+            max_value=5.0,
+            help="Financial advisor fee",
+        ) / 100
+    total_fee = expense_ratio + aum_fee + advisory_fee
+    st.caption(f"Total annual fee drag: {total_fee:.2%}")
+
 # --- Return Model ---
 st.subheader("Return Model")
 return_model_options = ["mvn", "student_t", "regime_switching"]
@@ -279,6 +311,9 @@ if st.button("Save Portfolio & Settings", type="primary"):
             ],
             inflation_mean=inflation_mean / 100,
             inflation_vol=market.inflation_vol,
+            expense_ratio=expense_ratio,
+            aum_fee=aum_fee,
+            advisory_fee=advisory_fee,
             return_model=return_model,
             degrees_of_freedom=degrees_of_freedom if return_model == "student_t" else None,
             regime_switching=regime_switching_config if return_model == "regime_switching" else None,

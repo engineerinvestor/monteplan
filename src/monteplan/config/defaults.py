@@ -54,3 +54,64 @@ def default_sim_config() -> SimulationConfig:
 def default_policies() -> PolicyBundle:
     """Default policies: constant real spending, semi-annual rebalancing."""
     return PolicyBundle()
+
+
+# --- Quick Start Templates ---
+
+
+def fire_plan() -> PlanConfig:
+    """FIRE template: aggressive saver, early retirement at 45."""
+    return PlanConfig(
+        current_age=30,
+        retirement_age=45,
+        end_age=90,
+        accounts=[
+            AccountConfig(account_type="taxable", balance=200_000, annual_contribution=30_000),
+            AccountConfig(account_type="traditional", balance=100_000, annual_contribution=23_000),
+            AccountConfig(account_type="roth", balance=50_000, annual_contribution=7_000),
+        ],
+        monthly_income=12_000,
+        monthly_spending=3_500,
+        income_growth_rate=0.03,
+    )
+
+
+def coast_fire_plan() -> PlanConfig:
+    """Coast FIRE template: stop contributing, let investments grow."""
+    return PlanConfig(
+        current_age=35,
+        retirement_age=60,
+        end_age=95,
+        accounts=[
+            AccountConfig(account_type="taxable", balance=100_000, annual_contribution=0),
+            AccountConfig(account_type="traditional", balance=300_000, annual_contribution=0),
+            AccountConfig(account_type="roth", balance=80_000, annual_contribution=0),
+        ],
+        monthly_income=7_000,
+        monthly_spending=4_000,
+    )
+
+
+def conservative_retiree_plan() -> PlanConfig:
+    """Conservative retiree template: near retirement with Social Security."""
+    from monteplan.config.schema import GuaranteedIncomeStream
+
+    return PlanConfig(
+        current_age=60,
+        retirement_age=65,
+        end_age=95,
+        accounts=[
+            AccountConfig(account_type="taxable", balance=200_000, annual_contribution=5_000),
+            AccountConfig(account_type="traditional", balance=500_000, annual_contribution=20_000),
+        ],
+        monthly_income=8_000,
+        monthly_spending=5_000,
+        guaranteed_income=[
+            GuaranteedIncomeStream(
+                name="Social Security",
+                monthly_amount=2_500,
+                start_age=67,
+                cola_rate=0.02,
+            ),
+        ],
+    )

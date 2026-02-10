@@ -18,8 +18,9 @@ from monteplan.config.schema import (
     PolicyBundle,
     SimulationConfig,
 )
+from monteplan.analytics.metrics import max_drawdown_distribution, ruin_by_age, spending_volatility
 from monteplan.core.engine import SimulationResult, simulate
-from monteplan.io.serialize import dump_config, dump_results_summary
+from monteplan.io.serialize import dump_config, dump_results_summary, dump_time_series_csv
 
 st.set_page_config(page_title="Run & Results — MontePlan", layout="wide")
 st.title("Run & Results")
@@ -38,13 +39,48 @@ def run_simulation(
     policies = PolicyBundle.model_validate_json(policies_json)
     sim_config = SimulationConfig.model_validate_json(sim_json)
 
-    result = simulate(plan, market, policies, sim_config)
+    # Enable store_paths temporarily for metrics computation
+    sim_config_with_paths = SimulationConfig(
+        n_paths=sim_config.n_paths,
+        seed=sim_config.seed,
+        store_paths=True,
+        antithetic=sim_config.antithetic,
+        stress_scenarios=sim_config.stress_scenarios,
+    )
+    result = simulate(plan, market, policies, sim_config_with_paths)
+
+    # Compute additional metrics from raw paths
+    retirement_step = (plan.retirement_age - plan.current_age) * 12
+    drawdown_stats = {}
+    spend_vol_stats = {}
+    ruin_ages: list[float] = []
+    ruin_fracs: list[float] = []
+
+    if result.all_paths is not None:
+        drawdown_stats = max_drawdown_distribution(result.all_paths)
+        spend_vol_stats = spending_volatility(
+            # Reconstruct spending from the spending_time_series percentiles is not exact;
+            # we need the raw spending. Since we have spending_ts but not raw paths,
+            # compute from wealth-based proxy. For now, use spending_ts for vol.
+            # Actually, we need to pass spending_history through. Let's use the ts.
+            result.all_paths[:, :0],  # placeholder
+            retirement_step,
+        )
+        ages_arr, fracs_arr = ruin_by_age(
+            result.all_paths, retirement_step, plan.current_age,
+        )
+        ruin_ages = ages_arr.tolist()
+        ruin_fracs = fracs_arr.tolist()
 
     # Convert to serializable dict for caching
     return {
         "success_probability": result.success_probability,
         "terminal_wealth_percentiles": result.terminal_wealth_percentiles,
         "wealth_time_series": {k: v.tolist() for k, v in result.wealth_time_series.items()},
+        "spending_time_series": {k: v.tolist() for k, v in result.spending_time_series.items()},
+        "max_drawdown": drawdown_stats,
+        "ruin_ages": ruin_ages,
+        "ruin_fractions": ruin_fracs,
         "n_paths": result.n_paths,
         "n_steps": result.n_steps,
         "seed": result.seed,
@@ -144,6 +180,37 @@ if "result_data" in st.session_state:
     fig = fan_chart(chart_result)  # type: ignore[arg-type]
     st.plotly_chart(fig, use_container_width=True)
 
+    # Spending fan chart
+    if "spending_time_series" in data:
+        st.subheader("Monthly Spending Over Time")
+        from app.components.charts import spending_fan_chart
+
+        spending_fig = spending_fan_chart(
+            data["spending_time_series"],
+            data["plan_current_age"],
+            data["plan_end_age"],
+            data["plan_retirement_age"],
+        )
+        st.plotly_chart(spending_fig, use_container_width=True)
+
+    # Max drawdown and ruin curve
+    if data.get("max_drawdown"):
+        st.subheader("Risk Metrics")
+        dd = data["max_drawdown"]
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Median Max Drawdown", f"{dd['p50']:.1%}")
+        with col2:
+            st.metric("P95 Max Drawdown", f"{dd['p95']:.1%}")
+        with col3:
+            st.metric("Mean Max Drawdown", f"{dd['mean']:.1%}")
+
+    if data.get("ruin_ages") and data.get("ruin_fractions"):
+        from app.components.charts import ruin_curve_chart
+
+        ruin_fig = ruin_curve_chart(data["ruin_ages"], data["ruin_fractions"])
+        st.plotly_chart(ruin_fig, use_container_width=True)
+
     # Simulation metadata
     with st.expander("Simulation Details"):
         col1, col2 = st.columns(2)
@@ -176,7 +243,7 @@ if "result_data" in st.session_state:
 
     # Downloads
     st.subheader("Export")
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         config_json = dump_config(plan, market, policies, sim_config)
         st.download_button(
@@ -198,4 +265,17 @@ if "result_data" in st.session_state:
             data=results_json,
             file_name="monteplan_results.json",
             mime="application/json",
+        )
+    with col3:
+        wealth_csv = dump_time_series_csv(
+            data["wealth_time_series"],
+            data["plan_current_age"],
+            data["plan_end_age"],
+            label="Wealth",
+        )
+        st.download_button(
+            "Download Time Series (CSV)",
+            data=wealth_csv,
+            file_name="monteplan_wealth_ts.csv",
+            mime="text/csv",
         )

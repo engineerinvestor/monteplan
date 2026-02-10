@@ -23,8 +23,9 @@ from monteplan.models.returns.mvn import MultivariateNormalReturns, StudentTRetu
 from monteplan.models.returns.regime_switching import RegimeSwitchingReturns
 from monteplan.models.stress import apply_stress_scenarios
 from monteplan.policies.contributions import apply_contributions, compute_monthly_contributions
-from monteplan.policies.rebalancing import rebalance_to_targets
+from monteplan.policies.rebalancing import rebalance_if_drifted, rebalance_to_targets
 from monteplan.policies.spending.constant_real import ConstantRealSpending
+from monteplan.policies.spending.floor_ceiling import FloorCeilingSpending
 from monteplan.policies.spending.guardrails import GuardrailsSpending
 from monteplan.policies.spending.percent_of_portfolio import PercentOfPortfolioSpending
 from monteplan.policies.spending.vpw import VPWSpending
@@ -41,6 +42,7 @@ class SimulationResult:
     success_probability: float
     terminal_wealth_percentiles: dict[str, float]
     wealth_time_series: dict[str, np.ndarray]
+    spending_time_series: dict[str, np.ndarray]
     n_paths: int
     n_steps: int
     seed: int
@@ -155,7 +157,11 @@ def simulate(
     )
 
     spending_policy: (
-        ConstantRealSpending | PercentOfPortfolioSpending | GuardrailsSpending | VPWSpending
+        ConstantRealSpending
+        | PercentOfPortfolioSpending
+        | GuardrailsSpending
+        | VPWSpending
+        | FloorCeilingSpending
     )
     if policies.spending.policy_type == "constant_real":
         spending_policy = ConstantRealSpending(plan.monthly_spending)
@@ -163,6 +169,8 @@ def simulate(
         spending_policy = PercentOfPortfolioSpending(policies.spending.withdrawal_rate)
     elif policies.spending.policy_type == "guardrails":
         spending_policy = GuardrailsSpending(policies.spending.guardrails)
+    elif policies.spending.policy_type == "floor_ceiling":
+        spending_policy = FloorCeilingSpending(policies.spending.floor_ceiling)
     else:
         spending_policy = VPWSpending(policies.spending.vpw, plan.end_age, plan.current_age)
 
@@ -182,13 +190,26 @@ def simulate(
         if 0 <= ev_step < n_steps:
             event_steps[ev_step] = event_steps.get(ev_step, 0.0) + ev.amount
 
+    # Pre-compute guaranteed income streams (start/end steps and monthly amounts)
+    gi_streams: list[tuple[int, int, float, float]] = []
+    for gi in plan.guaranteed_income:
+        gi_start = int(round((gi.start_age - plan.current_age) * 12))
+        gi_end = int(round((gi.end_age - plan.current_age) * 12)) if gi.end_age else n_steps
+        gi_monthly_cola = (1.0 + gi.cola_rate) ** (1.0 / 12.0) - 1.0
+        gi_streams.append((gi_start, gi_end, gi.monthly_amount, gi_monthly_cola))
+
+    # Investment fee drag (annualized → monthly)
+    total_annual_fee = market.expense_ratio + market.aum_fee + market.advisory_fee
+    monthly_fee = total_annual_fee / 12.0
+
     # Income growth tracking
     monthly_income_growth_rate = (1.0 + plan.income_growth_rate) ** (1.0 / 12.0) - 1.0
     income_growth_factor = 1.0
 
-    # Storage for wealth time series
+    # Storage for wealth and spending time series
     wealth_history = np.empty((n_paths, n_steps + 1))
     wealth_history[:, 0] = state.total_wealth
+    spending_history = np.zeros((n_paths, n_steps))
 
     # Main simulation loop
     for t in range(n_steps):
@@ -201,6 +222,10 @@ def simulate(
 
         # Ensure no negative positions
         np.maximum(state.positions, 0.0, out=state.positions)
+
+        # 1b. Apply investment fee drag (monthly deduction)
+        if total_annual_fee > 0:
+            state.positions *= 1.0 - monthly_fee
 
         # 2. Update cumulative inflation
         state.cumulative_inflation *= 1.0 + inflation_rates[:, t]
@@ -250,14 +275,27 @@ def simulate(
                     effective_tax_rate,
                 )
 
-        # 5. Calendar rebalancing
+        # 5. Rebalancing (calendar or threshold-based)
         month = timeline.month_of_year(t)
-        if month in policies.rebalancing_months:
+        if policies.rebalancing_strategy == "threshold":
+            rebalance_if_drifted(state, current_weights, policies.rebalancing_threshold)
+        elif month in policies.rebalancing_months:
             rebalance_to_targets(state, current_weights)
 
         # 6. Retirement phase: compute spending, withdraw, apply taxes
         if timeline.is_retired(t):
             spending_need = spending_policy.compute(state)
+
+            # Record total spending (before GI offset, for time series)
+            spending_history[:, t] = spending_need
+
+            # Subtract guaranteed income streams from spending need
+            for gi_start, gi_end, gi_amount, gi_cola in gi_streams:
+                if gi_start <= t < gi_end:
+                    months_active = t - gi_start
+                    cola_factor = (1.0 + gi_cola) ** months_active
+                    gi_nominal = gi_amount * cola_factor * state.cumulative_inflation
+                    spending_need = np.maximum(spending_need - gi_nominal, 0.0)
 
             # Only withdraw for non-depleted paths
             spending_need = np.where(state.is_depleted, 0.0, spending_need)
@@ -364,10 +402,17 @@ def simulate(
 
     wealth_ts["mean"] = wealth_history.mean(axis=0)
 
+    # Spending time series percentiles (for spending fan charts)
+    spending_ts: dict[str, np.ndarray] = {}
+    for p in percentile_keys:
+        spending_ts[f"p{p}"] = np.percentile(spending_history, p, axis=0)
+    spending_ts["mean"] = spending_history.mean(axis=0)
+
     return SimulationResult(
         success_probability=success_probability,
         terminal_wealth_percentiles=terminal_wealth_percentiles,
         wealth_time_series=wealth_ts,
+        spending_time_series=spending_ts,
         n_paths=n_paths,
         n_steps=n_steps,
         seed=sim_config.seed,

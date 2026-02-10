@@ -92,6 +92,94 @@ def fan_chart(result: SimulationResult) -> go.Figure:
     return fig
 
 
+def spending_fan_chart(
+    spending_ts: dict[str, Any],
+    current_age: int,
+    end_age: int,
+    retirement_age: int,
+) -> go.Figure:
+    """Create a fan chart showing spending percentile bands over time."""
+    n_points = len(spending_ts["p50"])
+    ages = np.linspace(current_age, end_age, n_points + 1)[:-1]  # n_steps points
+
+    p50 = np.array(spending_ts["p50"])
+
+    fig = go.Figure()
+
+    # P5-P95 band
+    p5 = np.array(spending_ts["p5"])
+    p95 = np.array(spending_ts["p95"])
+    fig.add_trace(
+        go.Scatter(
+            x=np.concatenate([ages, ages[::-1]]),
+            y=np.concatenate([p95, p5[::-1]]),
+            fill="toself",
+            fillcolor="rgba(0, 204, 150, 0.1)",
+            line=dict(color="rgba(0, 204, 150, 0)"),
+            name="P5-P95",
+            showlegend=True,
+        )
+    )
+
+    # P25-P75 band
+    p25 = np.array(spending_ts["p25"])
+    p75 = np.array(spending_ts["p75"])
+    fig.add_trace(
+        go.Scatter(
+            x=np.concatenate([ages, ages[::-1]]),
+            y=np.concatenate([p75, p25[::-1]]),
+            fill="toself",
+            fillcolor="rgba(0, 204, 150, 0.25)",
+            line=dict(color="rgba(0, 204, 150, 0)"),
+            name="P25-P75",
+            showlegend=True,
+        )
+    )
+
+    # Median line
+    fig.add_trace(
+        go.Scatter(
+            x=ages,
+            y=p50,
+            mode="lines",
+            line=dict(color="rgb(0, 204, 150)", width=2),
+            name="Median (P50)",
+        )
+    )
+
+    # Mean line
+    if "mean" in spending_ts:
+        fig.add_trace(
+            go.Scatter(
+                x=ages,
+                y=np.array(spending_ts["mean"]),
+                mode="lines",
+                line=dict(color="rgb(0, 204, 150)", width=1, dash="dot"),
+                name="Mean",
+            )
+        )
+
+    # Retirement line
+    fig.add_vline(
+        x=retirement_age,
+        line_dash="dash",
+        line_color="gray",
+        annotation_text="Retirement",
+    )
+
+    fig.update_layout(
+        title="Monthly Spending Over Time",
+        xaxis_title="Age",
+        yaxis_title="Monthly Spending ($)",
+        yaxis_tickformat="$,.0f",
+        hovermode="x unified",
+        template="plotly_white",
+        height=400,
+    )
+
+    return fig
+
+
 # Color palette for multiple scenarios
 _SCENARIO_COLORS = [
     "rgb(99, 110, 250)",   # blue
@@ -215,6 +303,45 @@ def dominance_scatter(scenarios: dict[str, dict[str, Any]]) -> go.Figure:
         template="plotly_white",
         height=450,
     )
+    return fig
+
+
+def ruin_curve_chart(
+    ages: list[float],
+    ruin_fractions: list[float],
+) -> go.Figure:
+    """Create a ruin probability curve by age.
+
+    Args:
+        ages: Array of ages.
+        ruin_fractions: Fraction of paths depleted at each age.
+
+    Returns:
+        Plotly Figure.
+    """
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=ages,
+            y=[f * 100 for f in ruin_fractions],
+            mode="lines",
+            fill="tozeroy",
+            fillcolor="rgba(239, 85, 59, 0.15)",
+            line=dict(color="rgb(239, 85, 59)", width=2),
+            name="Ruin Probability",
+        )
+    )
+
+    fig.update_layout(
+        title="Ruin Probability by Age",
+        xaxis_title="Age",
+        yaxis_title="Cumulative Ruin Probability (%)",
+        yaxis_range=[0, 100],
+        template="plotly_white",
+        height=400,
+    )
+
     return fig
 
 

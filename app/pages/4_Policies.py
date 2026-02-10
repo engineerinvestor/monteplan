@@ -6,6 +6,7 @@ import streamlit as st
 
 from monteplan.config.defaults import default_policies
 from monteplan.config.schema import (
+    FloorCeilingConfig,
     GuardrailsConfig,
     PolicyBundle,
     SpendingPolicyConfig,
@@ -24,12 +25,13 @@ policies: PolicyBundle = st.session_state["policies"]
 # --- Spending Policy ---
 st.subheader("Spending Policy")
 
-policy_options = ["constant_real", "percent_of_portfolio", "guardrails", "vpw"]
+policy_options = ["constant_real", "percent_of_portfolio", "guardrails", "vpw", "floor_ceiling"]
 policy_labels = {
     "constant_real": "Constant Real (inflation-adjusted flat amount)",
     "percent_of_portfolio": "Percent of Portfolio (fixed annual withdrawal rate)",
     "guardrails": "Guyton-Klinger Guardrails (adaptive with spending cuts/raises)",
     "vpw": "Variable Percentage Withdrawal (rate varies by remaining years)",
+    "floor_ceiling": "Floor & Ceiling (percent of portfolio with min/max bounds)",
 }
 policy_type = st.selectbox(
     "Spending Policy",
@@ -109,6 +111,35 @@ if policy_type == "vpw":
         ) / 100
     vpw = VPWConfig(min_rate=vpw_min, max_rate=vpw_max)
 
+# Floor & Ceiling config
+floor_ceiling = policies.spending.floor_ceiling
+if policy_type == "floor_ceiling":
+    st.markdown("**Floor & Ceiling Parameters**")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        fc_rate = st.number_input(
+            "Withdrawal Rate (%)",
+            value=floor_ceiling.withdrawal_rate * 100,
+            step=0.5, min_value=0.5, max_value=20.0,
+        ) / 100
+    with col2:
+        fc_floor = st.number_input(
+            "Monthly Floor ($)",
+            value=floor_ceiling.floor,
+            step=500.0, min_value=0.0,
+            help="Minimum monthly spending in today's dollars (grows with inflation)",
+        )
+    with col3:
+        fc_ceiling = st.number_input(
+            "Monthly Ceiling ($)",
+            value=floor_ceiling.ceiling,
+            step=500.0, min_value=0.0,
+            help="Maximum monthly spending in today's dollars (grows with inflation)",
+        )
+    floor_ceiling = FloorCeilingConfig(
+        withdrawal_rate=fc_rate, floor=fc_floor, ceiling=fc_ceiling,
+    )
+
 # --- Tax Model ---
 st.subheader("Tax Model")
 
@@ -157,24 +188,47 @@ w3 = remaining_2[0]
 st.write(f"3rd Priority: {w3.title()}")
 
 # --- Rebalancing ---
-st.subheader("Rebalancing Schedule")
-rebal_options = {
-    "Monthly": list(range(1, 13)),
-    "Quarterly": [1, 4, 7, 10],
-    "Semi-Annual": [1, 7],
-    "Annual": [1],
+st.subheader("Rebalancing")
+rebal_strategy_options = ["calendar", "threshold"]
+rebal_strategy_labels = {
+    "calendar": "Calendar (fixed schedule)",
+    "threshold": "Threshold (rebalance when drift exceeds limit)",
 }
-rebal_choice = st.selectbox(
-    "Rebalancing Frequency",
-    list(rebal_options.keys()),
-    index=list(rebal_options.keys()).index(
-        next(
-            (k for k, v in rebal_options.items() if v == policies.rebalancing_months),
-            "Semi-Annual",
-        )
-    ),
+rebalancing_strategy = st.selectbox(
+    "Rebalancing Strategy",
+    rebal_strategy_options,
+    index=rebal_strategy_options.index(policies.rebalancing_strategy),
+    format_func=lambda x: rebal_strategy_labels.get(x, x),
 )
-rebalancing_months = rebal_options[rebal_choice]
+
+rebalancing_months = policies.rebalancing_months
+rebalancing_threshold = policies.rebalancing_threshold
+
+if rebalancing_strategy == "calendar":
+    rebal_options = {
+        "Monthly": list(range(1, 13)),
+        "Quarterly": [1, 4, 7, 10],
+        "Semi-Annual": [1, 7],
+        "Annual": [1],
+    }
+    rebal_choice = st.selectbox(
+        "Rebalancing Frequency",
+        list(rebal_options.keys()),
+        index=list(rebal_options.keys()).index(
+            next(
+                (k for k, v in rebal_options.items() if v == policies.rebalancing_months),
+                "Semi-Annual",
+            )
+        ),
+    )
+    rebalancing_months = rebal_options[rebal_choice]
+else:
+    rebalancing_threshold = st.number_input(
+        "Drift Threshold (%)",
+        value=policies.rebalancing_threshold * 100,
+        step=1.0, min_value=1.0, max_value=50.0,
+        help="Rebalance when any asset drifts more than this percentage from target",
+    ) / 100
 
 # --- Save ---
 if st.button("Save Policies", type="primary"):
@@ -185,12 +239,15 @@ if st.button("Save Policies", type="primary"):
                 withdrawal_rate=withdrawal_rate,
                 guardrails=guardrails,
                 vpw=vpw,
+                floor_ceiling=floor_ceiling,
             ),
             tax_model=tax_model,
             tax_rate=tax_rate,
             filing_status=filing_status,
             withdrawal_order=[w1, w2, w3],
+            rebalancing_strategy=rebalancing_strategy,
             rebalancing_months=rebalancing_months,
+            rebalancing_threshold=rebalancing_threshold,
         )
         st.session_state["policies"] = new_policies
         st.success("Policies saved!")

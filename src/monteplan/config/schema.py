@@ -77,6 +77,28 @@ class RegimeSwitchingConfig(BaseModel):
         return self
 
 
+class GuaranteedIncomeStream(BaseModel):
+    """A recurring income stream (Social Security, pension, annuity)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(description="Stream name (e.g. 'Social Security', 'Pension')")
+    monthly_amount: float = Field(gt=0, description="Monthly benefit in today's dollars")
+    start_age: float = Field(ge=18, le=120, description="Age when payments begin")
+    cola_rate: float = Field(
+        default=0.0,
+        ge=0,
+        le=0.10,
+        description="Annual cost-of-living adjustment rate (0 = no COLA)",
+    )
+    end_age: float | None = Field(
+        default=None,
+        ge=18,
+        le=120,
+        description="Age when payments stop (None = lifetime)",
+    )
+
+
 class DiscreteEvent(BaseModel):
     """A one-time financial event at a specific age."""
 
@@ -122,6 +144,10 @@ class PlanConfig(BaseModel):
     )
     income_end_age: int | None = Field(
         default=None, ge=18, le=120, description="Age when earned income stops"
+    )
+    guaranteed_income: list[GuaranteedIncomeStream] = Field(
+        default_factory=list,
+        description="Recurring income streams (Social Security, pensions, annuities)",
     )
 
     @model_validator(mode="after")
@@ -205,6 +231,24 @@ class MarketAssumptions(BaseModel):
     glide_path: GlidePath | None = Field(
         default=None,
         description="Age-based glide path; when set, overrides static asset weights over time",
+    )
+    expense_ratio: float = Field(
+        default=0.0,
+        ge=0,
+        le=0.05,
+        description="Annual fund expense ratio (e.g. 0.001 for 10bps)",
+    )
+    aum_fee: float = Field(
+        default=0.0,
+        ge=0,
+        le=0.05,
+        description="Annual AUM/advisory platform fee",
+    )
+    advisory_fee: float = Field(
+        default=0.0,
+        ge=0,
+        le=0.05,
+        description="Annual financial advisor fee",
     )
 
     @model_validator(mode="after")
@@ -317,6 +361,24 @@ class VPWConfig(BaseModel):
     max_rate: float = Field(default=0.15, ge=0, le=1)
 
 
+class FloorCeilingConfig(BaseModel):
+    """Floor-and-ceiling spending policy parameters."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    withdrawal_rate: float = Field(default=0.04, gt=0, le=0.2)
+    floor: float = Field(
+        default=3000.0,
+        ge=0,
+        description="Monthly spending floor in today's dollars",
+    )
+    ceiling: float = Field(
+        default=10000.0,
+        ge=0,
+        description="Monthly spending ceiling in today's dollars",
+    )
+
+
 class SpendingPolicyConfig(BaseModel):
     """Spending policy configuration."""
 
@@ -327,6 +389,7 @@ class SpendingPolicyConfig(BaseModel):
         "percent_of_portfolio",
         "guardrails",
         "vpw",
+        "floor_ceiling",
     ] = "constant_real"
     withdrawal_rate: float = Field(
         default=0.04,
@@ -336,6 +399,7 @@ class SpendingPolicyConfig(BaseModel):
     )
     guardrails: GuardrailsConfig = Field(default_factory=GuardrailsConfig)
     vpw: VPWConfig = Field(default_factory=VPWConfig)
+    floor_ceiling: FloorCeilingConfig = Field(default_factory=FloorCeilingConfig)
 
 
 class PolicyBundle(BaseModel):
@@ -344,9 +408,19 @@ class PolicyBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     spending: SpendingPolicyConfig = Field(default_factory=SpendingPolicyConfig)
+    rebalancing_strategy: Literal["calendar", "threshold"] = Field(
+        default="calendar",
+        description="Rebalancing trigger: calendar schedule or drift threshold",
+    )
     rebalancing_months: list[int] = Field(
         default=[1, 7],
-        description="Months (1-12) when rebalancing occurs",
+        description="Months (1-12) when rebalancing occurs (calendar strategy)",
+    )
+    rebalancing_threshold: float = Field(
+        default=0.05,
+        ge=0.01,
+        le=0.50,
+        description="Max drift before rebalancing (threshold strategy, e.g. 0.05 = 5%)",
     )
     withdrawal_order: list[Literal["taxable", "traditional", "roth"]] = Field(
         default=["taxable", "traditional", "roth"],
