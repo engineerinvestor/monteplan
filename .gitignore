@@ -22,3 +22,4 @@ env/
 *.swp
 *.swo
 site/
+.ipynb_checkpoints/

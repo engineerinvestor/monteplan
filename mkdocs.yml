@@ -1,0 +1,107 @@
+site_name: monteplan
+site_description: Monte Carlo financial planning simulator
+site_url: https://engineerinvestor.github.io/monteplan/
+repo_url: https://github.com/engineerinvestor/monteplan
+repo_name: engineerinvestor/monteplan
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+    - toc.follow
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: false
+            show_root_heading: true
+            show_root_full_path: false
+            members_order: source
+            heading_level: 2
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.arithmatex:
+      generic: true
+  - toc:
+      permalink: true
+  - attr_list
+  - md_in_html
+  - tables
+
+extra_javascript:
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation: getting-started/installation.md
+      - Quick Start: getting-started/quickstart.md
+      - First Simulation: getting-started/first-simulation.md
+  - User Guide:
+      - Plan Configuration: guide/plan-config.md
+      - Market Assumptions: guide/market-assumptions.md
+      - Return Models: guide/return-models.md
+      - Spending Policies: guide/spending-policies.md
+      - Tax Models: guide/tax-models.md
+      - Sensitivity Analysis: guide/sensitivity.md
+      - Stress Testing: guide/stress-testing.md
+      - CLI Reference: guide/cli.md
+      - Streamlit App: guide/app.md
+  - Notebooks:
+      - Overview: notebooks/index.md
+  - Case Studies:
+      - Overview: case-studies/index.md
+      - "FIRE at 45": case-studies/fire.md
+      - Coast FIRE: case-studies/coast-fire.md
+      - Conservative Retiree: case-studies/conservative-retiree.md
+      - "Guardrails vs Constant Spending": case-studies/guardrails-vs-constant.md
+  - Math & Assumptions:
+      - Return Models: math/return-models.md
+      - Inflation: math/inflation.md
+      - Taxes: math/taxes.md
+      - Limitations: math/limitations.md
+  - API Reference:
+      - Engine: api/engine.md
+      - Configuration: api/config.md
+      - Return Models: api/returns.md
+      - Spending Policies: api/spending.md
+      - Taxes: api/taxes.md
+      - Analytics: api/analytics.md
+      - I/O: api/io.md
+  - Contributing: contributing.md
+  - Changelog: changelog.md
