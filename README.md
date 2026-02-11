@@ -35,13 +35,23 @@ monteplan models accumulation and decumulation with realistic taxes, multiple sp
 - **Investment Fees** -- Expense ratios, AUM fees, and advisory fees as monthly drag
 - **Streamlit App** -- Interactive web UI with Plotly charts, scenario comparison, and CSV export
 
+## Example Output
+
+<p align="center">
+  <img src="docs/images/fan_chart.png" alt="Monte Carlo Wealth Projection" width="100%">
+</p>
+
+<p align="center">
+  <img src="docs/images/spending_comparison.png" alt="Spending Policy Comparison" width="49%">
+  <img src="docs/images/ruin_curve.png" alt="Ruin Probability by Age" width="49%">
+</p>
+
 ## Quick Start
 
 ### Python Library
 
 ```python
-from monteplan.config.defaults import default_plan, default_market, default_policies, default_sim_config
-from monteplan.core.engine import simulate
+from monteplan import simulate, default_plan, default_market, default_policies, default_sim_config
 
 result = simulate(default_plan(), default_market(), default_policies(), default_sim_config())
 print(f"Success probability: {result.success_probability:.1%}")
