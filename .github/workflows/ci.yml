@@ -40,4 +40,4 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: pytest -v --cov=monteplan --cov-report=term-missing
-      - run: pytest --benchmark-only --benchmark-min-rounds=1
+      - run: pytest --benchmark-only --benchmark-min-rounds=1 -o "addopts="
