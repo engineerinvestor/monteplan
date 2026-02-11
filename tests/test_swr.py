@@ -34,11 +34,17 @@ class TestSWRFinder:
         policies = default_policies()
 
         result_90 = find_safe_withdrawal_rate(
-            plan, market, policies, sim,
+            plan,
+            market,
+            policies,
+            sim,
             target_success_rate=0.90,
         )
         result_95 = find_safe_withdrawal_rate(
-            plan, market, policies, sim,
+            plan,
+            market,
+            policies,
+            sim,
             target_success_rate=0.95,
         )
         assert result_95.max_monthly_spending <= result_90.max_monthly_spending
@@ -59,11 +65,17 @@ class TestSWRFinder:
         """Same seed produces same result."""
         sim = SimulationConfig(n_paths=500, seed=42)
         r1 = find_safe_withdrawal_rate(
-            default_plan(), default_market(), default_policies(), sim,
+            default_plan(),
+            default_market(),
+            default_policies(),
+            sim,
             target_success_rate=0.90,
         )
         r2 = find_safe_withdrawal_rate(
-            default_plan(), default_market(), default_policies(), sim,
+            default_plan(),
+            default_market(),
+            default_policies(),
+            sim,
             target_success_rate=0.90,
         )
         assert r1.max_monthly_spending == pytest.approx(r2.max_monthly_spending)

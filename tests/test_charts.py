@@ -5,8 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import numpy as np
-import plotly.graph_objects as go
-from app.components.charts import (
+import pytest
+
+go = pytest.importorskip("plotly.graph_objects")
+
+from app.components.charts import (  # noqa: E402
     allocation_area_chart,
     dominance_scatter,
     fan_chart,
@@ -18,7 +21,7 @@ from app.components.charts import (
     terminal_wealth_histogram,
     tornado_chart,
 )
-from app.components.theme import register_theme
+from app.components.theme import register_theme  # noqa: E402
 
 # Register theme once for all tests
 register_theme()

@@ -114,6 +114,4 @@ class TestNIITIntegration:
             sim,
         )
         # Flat model never triggers the NIIT block, so results are identical
-        assert with_flag.success_probability == pytest.approx(
-            base.success_probability, abs=0.001
-        )
+        assert with_flag.success_probability == pytest.approx(base.success_probability, abs=0.001)

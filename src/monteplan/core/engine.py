@@ -421,9 +421,10 @@ def simulate(
             )
             # State income tax overlay
             if policies.state_tax_rate > 0:
-                annual_tax = annual_tax + (
-                    state.annual_ordinary_income + state.annual_ltcg
-                ) * policies.state_tax_rate
+                annual_tax = (
+                    annual_tax
+                    + (state.annual_ordinary_income + state.annual_ltcg) * policies.state_tax_rate
+                )
             # Net Investment Income Tax (3.8% surtax)
             if policies.include_niit and isinstance(tax_model, USFederalTaxModel):
                 annual_tax = annual_tax + tax_model.compute_niit_vectorized(
