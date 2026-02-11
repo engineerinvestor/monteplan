@@ -107,6 +107,23 @@ monteplan separates computation from presentation:
 
 See the [documentation](https://engineerinvestor.github.io/monteplan/) for the full user guide, API reference, and mathematical details.
 
+## Citing
+
+If you use monteplan in academic work, please cite:
+
+```bibtex
+@software{monteplan,
+  title        = {monteplan: Monte Carlo Financial Planning Simulator},
+  author       = {{Engineer Investor}},
+  year         = {2026},
+  url          = {https://github.com/engineerinvestor/monteplan},
+  version      = {0.6.0},
+  license      = {Apache-2.0}
+}
+```
+
+GitHub also provides a citation prompt via the repository's [CITATION.cff](CITATION.cff) file.
+
 ## Disclaimer
 
 This is an educational tool for exploring financial planning concepts. It is **not financial advice**. Results are simulations based on simplified models and assumptions. Consult a qualified financial advisor for real planning decisions.

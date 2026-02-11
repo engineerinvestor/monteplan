@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "monteplan: Monte Carlo Financial Planning Simulator"
+authors:
+  - name: "Engineer Investor"
+url: "https://github.com/engineerinvestor/monteplan"
+repository-code: "https://github.com/engineerinvestor/monteplan"
+license: Apache-2.0
+version: 0.6.0
+date-released: "2026-02-11"
+keywords:
+  - monte-carlo
+  - financial-planning
+  - retirement
+  - simulation
+  - python
