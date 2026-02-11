@@ -105,8 +105,7 @@ def default_market(bond_type: str = "aggregate") -> MarketAssumptions:
     """
     weights = build_global_weights()
     assets = [
-        AssetClass(name=name, weight=w)
-        for name, w in zip(ALL_ASSET_NAMES, weights, strict=True)
+        AssetClass(name=name, weight=w) for name, w in zip(ALL_ASSET_NAMES, weights, strict=True)
     ]
 
     if bond_type == "treasuries":

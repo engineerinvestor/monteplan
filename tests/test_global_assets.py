@@ -43,12 +43,8 @@ class TestDefaultMarket:
 
     def test_stock_bond_split_is_60_40(self) -> None:
         market = default_market()
-        stock_total = sum(
-            a.weight for a in market.assets if "Stock" in a.name
-        )
-        bond_total = sum(
-            a.weight for a in market.assets if "Bond" in a.name
-        )
+        stock_total = sum(a.weight for a in market.assets if "Stock" in a.name)
+        bond_total = sum(a.weight for a in market.assets if "Bond" in a.name)
         assert stock_total == pytest.approx(0.60, abs=1e-9)
         assert bond_total == pytest.approx(0.40, abs=1e-9)
 
