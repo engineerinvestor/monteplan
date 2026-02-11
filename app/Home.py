@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Ensure the repo root is on sys.path so `from app.components...` imports work
+# when Streamlit Cloud runs `streamlit run app/Home.py`.
+_root = str(Path(__file__).resolve().parent.parent)
+if _root not in sys.path:
+    sys.path.insert(0, _root)
+
 import streamlit as st
 
 st.set_page_config(
