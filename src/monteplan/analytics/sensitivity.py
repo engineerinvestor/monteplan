@@ -67,7 +67,7 @@ class _ParamSpec:
     setter: _Setter
     is_additive: bool = False
     additive_delta: float = 0.0
-    target: str = "market"  # "market" or "plan"
+    target: str = "market"  # "market", "plan", or "policies"
 
 
 def _make_market_return_setter(idx: int) -> _Setter:
@@ -112,6 +112,7 @@ def _stock_allocation_setter(m: MarketAssumptions, val: float) -> MarketAssumpti
 def _build_param_registry(
     plan: PlanConfig,
     market: MarketAssumptions,
+    policies: PolicyBundle | None = None,
 ) -> dict[str, _ParamSpec]:
     """Build the full registry of perturbable parameters."""
     all_params: dict[str, _ParamSpec] = {}
@@ -166,6 +167,16 @@ def _build_param_registry(
             getter=lambda m: m.assets[0].weight,
             setter=_stock_allocation_setter,
             is_additive=False,
+        )
+
+    # State tax rate (only register when non-zero)
+    if policies is not None and policies.state_tax_rate > 0:
+        all_params["State Tax Rate"] = _ParamSpec(
+            getter=lambda p: p.state_tax_rate,
+            setter=lambda p, v: p.model_copy(update={"state_tax_rate": max(0.0, min(0.15, v))}),
+            is_additive=True,
+            additive_delta=0.02,
+            target="policies",
         )
 
     return all_params
@@ -225,7 +236,7 @@ def run_sensitivity(
     base_success = base_result.success_probability
 
     # Define all perturbable parameters
-    all_params = _build_param_registry(plan, market)
+    all_params = _build_param_registry(plan, market, policies)
 
     # Filter to requested parameters
     if parameters is not None:
@@ -239,7 +250,12 @@ def run_sensitivity(
     param_vals: dict[str, tuple[float, float, float]] = {}  # name -> (base, low, high)
 
     for param_name, spec in param_set.items():
-        target_obj: PlanConfig | MarketAssumptions = plan if spec.target == "plan" else market
+        if spec.target == "plan":
+            target_obj: PlanConfig | MarketAssumptions | PolicyBundle = plan
+        elif spec.target == "policies":
+            target_obj = policies
+        else:
+            target_obj = market
         base_val: float = spec.getter(target_obj)
 
         if spec.is_additive:
@@ -259,6 +275,12 @@ def run_sensitivity(
                 jobs.append((param_name, "low", low_plan, market, policies, base_sim))
             except Exception:
                 jobs.append((param_name, "low_fail", plan, market, policies, base_sim))
+        elif spec.target == "policies":
+            try:
+                low_policies: PolicyBundle = spec.setter(policies, low_val)
+                jobs.append((param_name, "low", plan, market, low_policies, base_sim))
+            except Exception:
+                jobs.append((param_name, "low_fail", plan, market, policies, base_sim))
         else:
             try:
                 low_market: MarketAssumptions = spec.setter(market, low_val)
@@ -271,6 +293,12 @@ def run_sensitivity(
             try:
                 high_plan: PlanConfig = spec.setter(plan, high_val)
                 jobs.append((param_name, "high", high_plan, market, policies, base_sim))
+            except Exception:
+                jobs.append((param_name, "high_fail", plan, market, policies, base_sim))
+        elif spec.target == "policies":
+            try:
+                high_policies: PolicyBundle = spec.setter(policies, high_val)
+                jobs.append((param_name, "high", plan, market, high_policies, base_sim))
             except Exception:
                 jobs.append((param_name, "high_fail", plan, market, policies, base_sim))
         else:
@@ -374,7 +402,7 @@ def run_2d_sensitivity(
     capped_paths = min(sim_config.n_paths, 1000)
     base_sim = sim_config.model_copy(update={"n_paths": capped_paths, "preset": None})
 
-    all_params = _build_param_registry(plan, market)
+    all_params = _build_param_registry(plan, market, policies)
 
     if x_param not in all_params:
         raise ValueError(f"Unknown parameter: {x_param}")
@@ -388,10 +416,17 @@ def run_2d_sensitivity(
     y_values = np.linspace(y_range[0], y_range[1], y_steps).tolist()
 
     # Get base values
-    x_target: PlanConfig | MarketAssumptions = plan if x_spec.target == "plan" else market
-    y_target: PlanConfig | MarketAssumptions = plan if y_spec.target == "plan" else market
-    base_x = x_spec.getter(x_target)
-    base_y = y_spec.getter(y_target)
+    def _resolve_target(
+        spec: _ParamSpec,
+    ) -> PlanConfig | MarketAssumptions | PolicyBundle:
+        if spec.target == "plan":
+            return plan
+        if spec.target == "policies":
+            return policies
+        return market
+
+    base_x = x_spec.getter(_resolve_target(x_spec))
+    base_y = y_spec.getter(_resolve_target(y_spec))
 
     # Base run
     base_result = simulate(plan, market, policies, base_sim)
@@ -403,17 +438,22 @@ def run_2d_sensitivity(
         for xi, xv in enumerate(x_values):
             cur_plan = plan
             cur_market = market
+            cur_policies = policies
             # Apply x parameter
             if x_spec.target == "plan":
                 cur_plan = x_spec.setter(cur_plan, xv)
+            elif x_spec.target == "policies":
+                cur_policies = x_spec.setter(cur_policies, xv)
             else:
                 cur_market = x_spec.setter(cur_market, xv)
             # Apply y parameter
             if y_spec.target == "plan":
                 cur_plan = y_spec.setter(cur_plan, yv)
+            elif y_spec.target == "policies":
+                cur_policies = y_spec.setter(cur_policies, yv)
             else:
                 cur_market = y_spec.setter(cur_market, yv)
-            jobs.append((yi, xi, cur_plan, cur_market, policies, base_sim))
+            jobs.append((yi, xi, cur_plan, cur_market, cur_policies, base_sim))
 
     # Run all jobs
     grid: list[list[float]] = [[0.0] * x_steps for _ in range(y_steps)]

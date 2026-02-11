@@ -402,6 +402,47 @@ class SpendingPolicyConfig(BaseModel):
     floor_ceiling: FloorCeilingConfig = Field(default_factory=FloorCeilingConfig)
 
 
+class RothConversionConfig(BaseModel):
+    """Roth conversion strategy configuration."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(default=False, description="Enable Roth conversions")
+    strategy: Literal["fixed_amount", "fill_bracket"] = Field(
+        default="fixed_amount",
+        description="Conversion strategy: fixed annual amount or fill to bracket top",
+    )
+    annual_amount: float = Field(
+        default=0.0,
+        ge=0,
+        description="Annual conversion amount (fixed_amount strategy)",
+    )
+    fill_to_bracket_top: float = Field(
+        default=0.22,
+        ge=0.10,
+        le=0.37,
+        description="Target marginal rate for fill_bracket strategy",
+    )
+    start_age: float = Field(
+        default=55,
+        ge=18,
+        le=120,
+        description="Age to begin Roth conversions",
+    )
+    end_age: float = Field(
+        default=72,
+        ge=18,
+        le=120,
+        description="Age to stop Roth conversions",
+    )
+
+    @model_validator(mode="after")
+    def _validate_ages(self) -> RothConversionConfig:
+        if self.end_age <= self.start_age:
+            raise ValueError("end_age must be greater than start_age")
+        return self
+
+
 class PolicyBundle(BaseModel):
     """Bundle of all policy configurations."""
 
@@ -439,4 +480,18 @@ class PolicyBundle(BaseModel):
     filing_status: Literal["single", "married_jointly"] = Field(
         default="single",
         description="Tax filing status (used when tax_model='us_federal')",
+    )
+    state_tax_rate: float = Field(
+        default=0.0,
+        ge=0,
+        le=0.15,
+        description="Flat state income tax rate on ordinary income + LTCG",
+    )
+    include_niit: bool = Field(
+        default=False,
+        description="Include 3.8% Net Investment Income Tax surtax",
+    )
+    roth_conversion: RothConversionConfig = Field(
+        default_factory=RothConversionConfig,
+        description="Roth conversion strategy configuration",
     )

@@ -180,7 +180,7 @@ def simulate(
         tax_model = USFederalTaxModel()
     else:
         tax_model = FlatTaxModel(policies.tax_rate)
-    effective_tax_rate = tax_model.tax_rate_traditional()
+    effective_tax_rate = tax_model.tax_rate_traditional() + policies.state_tax_rate
     rmd_calc = RMDCalculator()
 
     # Pre-compute discrete event steps
@@ -197,6 +197,25 @@ def simulate(
         gi_end = int(round((gi.end_age - plan.current_age) * 12)) if gi.end_age else n_steps
         gi_monthly_cola = (1.0 + gi.cola_rate) ** (1.0 / 12.0) - 1.0
         gi_streams.append((gi_start, gi_end, gi.monthly_amount, gi_monthly_cola))
+
+    # Pre-compute Roth conversion window
+    roth_cfg = policies.roth_conversion
+    roth_enabled = roth_cfg.enabled
+    roth_start_step = -1
+    roth_end_step = -1
+    roth_trad_indices: list[int] = []
+    roth_acct_idx = -1
+    roth_bracket_ceiling = 0.0
+    if roth_enabled:
+        roth_start_step = int(round((roth_cfg.start_age - plan.current_age) * 12))
+        roth_end_step = int(round((roth_cfg.end_age - plan.current_age) * 12))
+        roth_trad_indices = [i for i, tp in enumerate(account_types) if tp == "traditional"]
+        roth_indices = [i for i, tp in enumerate(account_types) if tp == "roth"]
+        roth_acct_idx = roth_indices[0] if roth_indices else -1
+        if roth_cfg.strategy == "fill_bracket" and isinstance(tax_model, USFederalTaxModel):
+            roth_bracket_ceiling = tax_model.bracket_ceiling(
+                roth_cfg.fill_to_bracket_top, policies.filing_status
+            )
 
     # Investment fee drag (annualized → monthly)
     total_annual_fee = market.expense_ratio + market.aum_fee + market.advisory_fee
@@ -347,6 +366,51 @@ def simulate(
                         state.annual_ordinary_income += force_withdraw
                         rmd_shortfall -= force_withdraw
 
+        # 6b. Roth conversions (year-end, within conversion window)
+        if (
+            roth_enabled
+            and roth_trad_indices
+            and roth_acct_idx >= 0
+            and month == 12
+            and roth_start_step <= t < roth_end_step
+        ):
+            # Determine conversion amount per path
+            if roth_cfg.strategy == "fill_bracket":
+                # Fill to bracket ceiling minus already-accumulated ordinary income
+                conversion_target = np.maximum(
+                    roth_bracket_ceiling - state.annual_ordinary_income, 0.0
+                )
+            else:
+                conversion_target = np.full(n_paths, roth_cfg.annual_amount)
+
+            conversion_target = np.where(state.is_depleted, 0.0, conversion_target)
+
+            # Collect available traditional balance
+            trad_available = np.zeros(n_paths)
+            for idx in roth_trad_indices:
+                trad_available += state.positions[:, idx, :].sum(axis=1)
+
+            # Actual conversion = min(target, available)
+            actual_conversion = np.minimum(conversion_target, trad_available)
+
+            # Move positions pro-rata from traditional to first Roth account
+            convert_mask = actual_conversion > 0
+            if convert_mask.any():
+                remaining = actual_conversion.copy()
+                for idx in roth_trad_indices:
+                    acct_bal = state.positions[:, idx, :].sum(axis=1)
+                    move = np.minimum(remaining, acct_bal)
+                    safe_bal = np.where(acct_bal > 0, acct_bal, 1.0)
+                    frac = np.minimum(move / safe_bal, 1.0)
+                    # Assets to move (pro-rata within account)
+                    moved_positions = state.positions[:, idx, :] * frac[:, np.newaxis]
+                    state.positions[:, idx, :] -= moved_positions
+                    state.positions[:, roth_acct_idx, :] += moved_positions
+                    remaining -= move
+
+                # Conversion counts as ordinary income
+                state.annual_ordinary_income += actual_conversion
+
         # 7. Year-end annual tax computation (for US federal model)
         if policies.tax_model == "us_federal" and month == 12:
             # Vectorized tax computation across all paths
@@ -355,6 +419,18 @@ def simulate(
                 state.annual_ltcg,
                 policies.filing_status,
             )
+            # State income tax overlay
+            if policies.state_tax_rate > 0:
+                annual_tax = annual_tax + (
+                    state.annual_ordinary_income + state.annual_ltcg
+                ) * policies.state_tax_rate
+            # Net Investment Income Tax (3.8% surtax)
+            if policies.include_niit and isinstance(tax_model, USFederalTaxModel):
+                annual_tax = annual_tax + tax_model.compute_niit_vectorized(
+                    state.annual_ordinary_income,
+                    state.annual_ltcg,
+                    policies.filing_status,
+                )
             annual_tax = np.where(state.is_depleted, 0.0, annual_tax)
             total_w = state.total_wealth
             safe_total = np.where(total_w > 0, total_w, 1.0)

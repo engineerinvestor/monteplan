@@ -304,6 +304,63 @@ if "result_data" in st.session_state:
         )
         st.plotly_chart(alloc_fig, use_container_width=True)
 
+    # Safe Withdrawal Rate Finder
+    st.subheader("Safe Withdrawal Rate Finder")
+    with st.expander("Find the maximum safe spending level"):
+        from monteplan.analytics.swr import find_safe_withdrawal_rate
+
+        swr_col1, swr_col2 = st.columns(2)
+        with swr_col1:
+            swr_target = st.slider(
+                "Target Success Rate (%)",
+                min_value=50,
+                max_value=99,
+                value=95,
+                step=1,
+                key="swr_target",
+            ) / 100
+        with swr_col2:
+            swr_paths = st.number_input(
+                "Simulation Paths",
+                min_value=500,
+                max_value=20000,
+                value=2000,
+                step=500,
+                key="swr_paths",
+            )
+
+        if st.button("Find Safe Withdrawal Rate"):
+            swr_sim = SimulationConfig(
+                n_paths=int(swr_paths),
+                seed=sim_config.seed,
+            )
+            with st.spinner("Searching for safe withdrawal rate..."):
+                swr_result = find_safe_withdrawal_rate(
+                    plan, market, policies, swr_sim,
+                    target_success_rate=swr_target,
+                )
+            swr_c1, swr_c2, swr_c3 = st.columns(3)
+            with swr_c1:
+                st.metric(
+                    "Max Monthly Spending",
+                    f"${swr_result.max_monthly_spending:,.0f}",
+                )
+            with swr_c2:
+                st.metric(
+                    "Annual Withdrawal",
+                    f"${swr_result.annual_withdrawal_amount:,.0f}",
+                )
+            with swr_c3:
+                st.metric(
+                    "Implied Withdrawal Rate",
+                    f"{swr_result.implied_withdrawal_rate:.2%}",
+                )
+            st.caption(
+                f"Achieved {swr_result.achieved_success_rate:.1%} success "
+                f"after {swr_result.iterations} iterations "
+                f"(target: {swr_result.target_success_rate:.0%})"
+            )
+
     # Save scenario for comparison
     st.subheader("Save for Comparison")
     scenario_name = st.text_input(

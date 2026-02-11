@@ -1,6 +1,20 @@
 # Changelog
 
-## v0.4 (In Progress)
+## v0.5
+
+### New Features
+- State income tax: flat state tax rate overlay on ordinary income + LTCG
+- NIIT (Net Investment Income Tax): 3.8% surtax on investment income above MAGI thresholds
+- Roth conversion modeling: fixed amount or fill-to-bracket strategies with configurable age window
+- Safe withdrawal rate finder: bisection-based search for maximum spending at target success rate
+- Expanded top-level exports: 18+ symbols importable directly from `monteplan`
+
+### Improvements
+- Sensitivity analysis supports `policies` target (state tax rate perturbation)
+- `USFederalTaxModel.bracket_ceiling()` for fill-bracket Roth conversion strategy
+- `USFederalTaxModel.compute_niit_vectorized()` for vectorized NIIT computation
+
+## v0.4
 
 ### New Features
 - Stress testing: crash, lost decade, high inflation, sequence risk scenarios

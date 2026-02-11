@@ -9,6 +9,7 @@ from monteplan.config.schema import (
     FloorCeilingConfig,
     GuardrailsConfig,
     PolicyBundle,
+    RothConversionConfig,
     SpendingPolicyConfig,
     VPWConfig,
 )
@@ -173,6 +174,76 @@ if tax_model == "us_federal":
         format_func=lambda x: x.replace("_", " ").title(),
     )
 
+include_niit = False
+if tax_model == "us_federal":
+    include_niit = st.checkbox(
+        "Include NIIT (3.8% Net Investment Income Tax)",
+        value=policies.include_niit,
+        help="3.8% surtax on investment income above $200K (single) / $250K (married)",
+    )
+
+state_tax_rate = st.number_input(
+    "State Income Tax Rate (%)",
+    value=policies.state_tax_rate * 100,
+    step=0.5,
+    min_value=0.0,
+    max_value=15.0,
+    help="Flat state income tax rate applied to ordinary income + LTCG (0 = no state tax)",
+) / 100
+
+# --- Roth Conversions ---
+st.subheader("Roth Conversions")
+st.caption(
+    "Move money from traditional to Roth accounts, paying ordinary income tax now "
+    "for tax-free future growth."
+)
+
+roth_cfg = policies.roth_conversion
+roth_enabled = st.checkbox("Enable Roth Conversions", value=roth_cfg.enabled)
+
+roth_strategy = roth_cfg.strategy
+roth_annual_amount = roth_cfg.annual_amount
+roth_fill_bracket = roth_cfg.fill_to_bracket_top
+roth_start_age = roth_cfg.start_age
+roth_end_age = roth_cfg.end_age
+
+if roth_enabled:
+    roth_strategy = st.selectbox(
+        "Conversion Strategy",
+        ["fixed_amount", "fill_bracket"],
+        index=["fixed_amount", "fill_bracket"].index(roth_cfg.strategy),
+        format_func=lambda x: {
+            "fixed_amount": "Fixed Annual Amount",
+            "fill_bracket": "Fill to Tax Bracket",
+        }.get(x, x),
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        if roth_strategy == "fixed_amount":
+            roth_annual_amount = st.number_input(
+                "Annual Conversion Amount ($)",
+                value=roth_cfg.annual_amount,
+                step=5000.0,
+                min_value=0.0,
+                help="Fixed dollar amount to convert annually",
+            )
+        else:
+            roth_fill_bracket = st.number_input(
+                "Fill to Bracket Top (%)",
+                value=roth_cfg.fill_to_bracket_top * 100,
+                step=1.0,
+                min_value=10.0,
+                max_value=37.0,
+                help="Convert enough to fill up to this marginal tax bracket",
+            ) / 100
+    with col2:
+        roth_start_age = st.number_input(
+            "Start Age", value=int(roth_cfg.start_age), min_value=18, max_value=120,
+        )
+        roth_end_age = st.number_input(
+            "End Age", value=int(roth_cfg.end_age), min_value=18, max_value=120,
+        )
+
 # --- Withdrawal Order ---
 st.subheader("Withdrawal Order")
 st.caption("Priority order for withdrawing from accounts in retirement (first = withdrawn first)")
@@ -244,6 +315,16 @@ if st.button("Save Policies", type="primary"):
             tax_model=tax_model,
             tax_rate=tax_rate,
             filing_status=filing_status,
+            state_tax_rate=state_tax_rate,
+            include_niit=include_niit,
+            roth_conversion=RothConversionConfig(
+                enabled=roth_enabled,
+                strategy=roth_strategy,
+                annual_amount=roth_annual_amount,
+                fill_to_bracket_top=roth_fill_bracket,
+                start_age=roth_start_age,
+                end_age=roth_end_age,
+            ),
             withdrawal_order=[w1, w2, w3],
             rebalancing_strategy=rebalancing_strategy,
             rebalancing_months=rebalancing_months,
