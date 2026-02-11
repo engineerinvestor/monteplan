@@ -12,6 +12,7 @@
 
 <p align="center">
   <a href="https://engineerinvestor.github.io/monteplan/">Documentation</a> |
+  <a href="https://github.com/engineerinvestor/monteplan/blob/main/paper/monteplan.pdf">Technical Paper</a> |
   <a href="https://engineerinvestor.github.io/monteplan/notebooks/">Notebooks</a> |
   <a href="https://colab.research.google.com/github/engineerinvestor/monteplan/blob/main/notebooks/01_getting_started.ipynb">Try in Colab</a>
 </p>
