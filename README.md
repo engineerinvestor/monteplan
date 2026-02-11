@@ -4,6 +4,8 @@
 </p>
 
 <p align="center">
+  <a href="https://pypi.org/project/monteplan/"><img src="https://img.shields.io/pypi/v/monteplan" alt="PyPI"></a>
+  <a href="https://monteplan.streamlit.app"><img src="https://static.streamlit.io/badges/streamlit_badge_black_white.svg" alt="Open in Streamlit"></a>
   <a href="https://github.com/engineerinvestor/monteplan/actions"><img src="https://github.com/engineerinvestor/monteplan/workflows/CI/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
   <a href="https://github.com/engineerinvestor/monteplan/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-green" alt="License"></a>
@@ -11,6 +13,8 @@
 </p>
 
 <p align="center">
+  <a href="https://monteplan.streamlit.app">Live App</a> |
+  <a href="https://pypi.org/project/monteplan/">PyPI</a> |
   <a href="https://engineerinvestor.github.io/monteplan/">Documentation</a> |
   <a href="https://github.com/engineerinvestor/monteplan/blob/main/paper/monteplan.pdf">Technical Paper</a> |
   <a href="https://engineerinvestor.github.io/monteplan/notebooks/">Notebooks</a> |
@@ -34,7 +38,7 @@ monteplan models accumulation and decumulation with realistic taxes, multiple sp
 - **Antithetic Variates** -- Variance reduction for tighter confidence intervals
 - **Glide Paths** -- Age-based target allocation shifts
 - **Investment Fees** -- Expense ratios, AUM fees, and advisory fees as monthly drag
-- **Streamlit App** -- Interactive web UI with Plotly charts, scenario comparison, and CSV export
+- **Streamlit App** -- [Interactive web UI](https://monteplan.streamlit.app) with Plotly charts, scenario comparison, and CSV export
 
 ## Example Output
 
@@ -66,6 +70,8 @@ monteplan run --paths 10000 --seed 42
 
 ### Streamlit App
 
+Try the [live app](https://monteplan.streamlit.app) or run locally:
+
 ```bash
 pip install monteplan[app]
 streamlit run app/Home.py
@@ -76,6 +82,8 @@ streamlit run app/Home.py
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/engineerinvestor/monteplan/blob/main/notebooks/01_getting_started.ipynb)
 
 ## Installation
+
+Install from [PyPI](https://pypi.org/project/monteplan/):
 
 ```bash
 pip install monteplan
