@@ -1,0 +1,1910 @@
+% monteplan: A Vectorized Monte Carlo Framework for Multi-Account
+% Retirement Planning with Tax-Aware Decumulation
+%
+% Technical White Paper — v0.5.0
+% -----------------------------------------------------------
+
+\documentclass[11pt,letterpaper]{article}
+
+% === Geometry & Layout ===
+\usepackage[margin=1in]{geometry}
+\usepackage{setspace}
+\onehalfspacing
+
+% === Fonts & Encoding ===
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+% === Mathematics ===
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage{bm}
+
+% === Tables & Figures ===
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{multirow}
+\usepackage{array}
+
+% === Algorithms ===
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\SetKwInput{KwInput}{Input}
+\SetKwInput{KwOutput}{Output}
+\SetKwComment{Comment}{$\triangleright$\ }{}
+
+% === Code listings ===
+\usepackage{listings}
+\lstset{
+  language=Python,
+  basicstyle=\small\ttfamily,
+  keywordstyle=\bfseries,
+  commentstyle=\itshape,
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny,
+  xleftmargin=2em,
+}
+
+% === Cross-references & Links ===
+\usepackage[colorlinks=true,linkcolor=blue!60!black,citecolor=green!50!black,urlcolor=blue!70!black]{hyperref}
+\usepackage[nameinlink,capitalize]{cleveref}
+
+% === Bibliography ===
+\usepackage[numbers,sort&compress]{natbib}
+
+% === Misc ===
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{float}
+
+% === Theorem environments ===
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{corollary}[theorem]{Corollary}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\newtheorem{remark}[theorem]{Remark}
+
+% === Custom commands ===
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\Cov}{Cov}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\tr}{tr}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\given}{\,|\,}
+
+% === Title ===
+\title{%
+  \textbf{monteplan}: A Vectorized Monte Carlo Framework for\\
+  Multi-Account Retirement Planning\\
+  with Tax-Aware Decumulation%
+}
+\author{%
+  Engineer Investor\\
+  \texttt{egr.investor@gmail.com}\\
+  \url{https://github.com/engineerinvestor/monteplan}%
+}
+\date{February 2026 \quad---\quad Version 0.5.0}
+
+% ============================================================
+\begin{document}
+\maketitle
+\thispagestyle{empty}
+
+% === Abstract ===
+\begin{abstract}
+\noindent
+We present \textsc{monteplan}, an open-source Python framework for Monte Carlo
+simulation of multi-account retirement plans under realistic tax treatment.
+The framework addresses a critical gap in open-source financial planning
+tools: most existing solutions either lack multi-account modeling, ignore
+progressive tax brackets, or restrict returns to historical replay.
+\textsc{monteplan} provides four return models---multivariate normal,
+multivariate Student-$t$, Markov regime-switching, and historical block
+bootstrap---coupled with an Ornstein--Uhlenbeck inflation process.
+The engine operates on a fully vectorized three-dimensional tensor
+representation of positions $(\text{paths} \times \text{accounts} \times
+\text{assets})$, eliminating per-path Python loops to achieve high throughput.
+Tax-aware decumulation incorporates US federal progressive brackets with
+long-term capital gains rates, the Net Investment Income Tax surtax,
+state tax overlays, Required Minimum Distributions, and Roth conversion
+strategies (fixed-amount and fill-bracket).  Five dynamic spending
+policies---constant real, percent-of-portfolio, Guyton--Klinger guardrails,
+variable percentage withdrawal, and floor-ceiling---provide flexible
+drawdown modeling.  Antithetic variates offer variance reduction, and a
+sensitivity analysis framework enables one-at-a-time perturbation and
+two-dimensional grid searches.  The framework is validated through golden
+test suites with exact bit-level reproducibility via the PCG64DXSM
+pseudorandom generator.  All configuration is type-safe via Pydantic~v2,
+and a Streamlit web application provides interactive exploration.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+% ============================================================
+\section{Introduction}\label{sec:intro}
+
+Retirement planning under uncertainty is one of the most consequential
+financial decisions individuals face.  The fundamental challenge lies in
+projecting portfolio performance, inflation, tax liability, and spending
+needs over horizons that may span 30--40 years, subject to stochastic
+market returns and evolving tax policy.
+
+Deterministic planning tools---which assume fixed rates of return and
+inflation---produce point estimates that ignore the distribution of
+outcomes.  Since Bengen's seminal work on safe withdrawal rates
+\cite{bengen1994} and the Trinity Study \cite{cooley1998}, Monte Carlo
+simulation has become the standard methodology for quantifying the
+probability of portfolio survival under uncertainty.
+
+However, most open-source Monte Carlo retirement tools suffer from one
+or more of the following limitations:
+\begin{enumerate}[label=(\roman*)]
+  \item \textbf{Single-account models} that ignore the tax-differential
+    treatment of taxable, traditional (tax-deferred), and Roth
+    (tax-free) accounts;
+  \item \textbf{Historical replay only}, lacking parametric models for
+    regime-dependent behavior or fat-tailed returns;
+  \item \textbf{Flat-rate tax approximations} that miss the significant
+    impact of progressive brackets, long-term capital gains rates, and
+    surtaxes such as the Net Investment Income Tax;
+  \item \textbf{Static spending rules}, typically the ``4\% rule,'' without
+    dynamic policies that adapt to portfolio performance.
+\end{enumerate}
+
+This paper describes \textsc{monteplan}, an open-source Python framework
+(v0.5.0) that addresses all four limitations.  The key contributions are:
+
+\begin{enumerate}
+  \item A \textbf{vectorized multi-account simulation engine} operating on
+    a three-dimensional numpy tensor of positions
+    $(\text{paths} \times \text{accounts} \times \text{assets})$, with no
+    per-path Python loops in the main simulation step;
+  \item \textbf{Four asset return models}: multivariate normal (MVN),
+    multivariate Student-$t$, Markov regime-switching with $K \in [2,5]$
+    regimes, and historical block bootstrap;
+  \item \textbf{Tax-aware decumulation} with US federal progressive brackets,
+    long-term capital gains rates, the 3.8\% Net Investment Income Tax,
+    configurable state income tax, Required Minimum Distributions (RMDs),
+    and Roth conversion strategies;
+  \item \textbf{Five dynamic spending policies}: constant real,
+    percent-of-portfolio, Guyton--Klinger guardrails \cite{guyton2006},
+    variable percentage withdrawal (VPW), and floor-ceiling;
+  \item A \textbf{sensitivity analysis framework} supporting one-at-a-time
+    perturbation with parallel execution and two-dimensional grid search;
+  \item A \textbf{safe withdrawal rate finder} using bisection search on the
+    success probability function.
+\end{enumerate}
+
+The remainder of this paper is organized as follows.
+\Cref{sec:math} develops the mathematical framework for return models,
+inflation dynamics, tax computation, and spending policies.
+\Cref{sec:arch} describes the computational architecture, vectorization
+strategy, and variance reduction.  \Cref{sec:config} covers the
+configuration and validation system.  \Cref{sec:analytics} presents the
+analytics framework.  \Cref{sec:validation} provides empirical
+validation and convergence analysis.  \Cref{sec:related} surveys related
+work, and \Cref{sec:conclusion} concludes.
+
+
+% ============================================================
+\section{Mathematical Framework}\label{sec:math}
+
+% ------------------------------------------------------------
+\subsection{Asset Return Models}\label{sec:returns}
+
+Let $n$ denote the number of asset classes, $T$ the number of monthly
+time steps, and $M$ the number of Monte Carlo paths.  The simulation
+pre-generates a return tensor
+$\bm{R} \in \R^{M \times T \times n}$
+before entering the main loop.  Each element $R_{m,t,i}$ represents the
+simple monthly return for path $m$, step $t$, and asset $i$.
+
+\subsubsection{Multivariate Normal Returns}\label{sec:mvn}
+
+Given annual expected returns $\bm{\mu}^{(a)} \in \R^n$ and annual
+volatilities $\bm{\sigma}^{(a)} \in \R^n_+$, the monthly parameters are:
+\begin{align}
+  \mu_i &= \frac{\mu_i^{(a)}}{12}, \label{eq:mu_monthly} \\
+  \sigma_i &= \frac{\sigma_i^{(a)}}{\sqrt{12}}. \label{eq:sigma_monthly}
+\end{align}
+Given the $n \times n$ correlation matrix $\bm{\rho}$, the monthly
+covariance matrix is:
+\begin{equation}\label{eq:cov}
+  \bm{\Sigma} = \diag(\bm{\sigma}) \, \bm{\rho} \, \diag(\bm{\sigma}).
+\end{equation}
+
+Returns are drawn as:
+\begin{equation}\label{eq:mvn_draw}
+  \bm{R}_{m,t} \sim \mathcal{N}(\bm{\mu}, \bm{\Sigma}),
+  \quad m=1,\dots,M, \; t=1,\dots,T.
+\end{equation}
+
+In practice, the implementation draws $M \times T$ samples from
+$\mathcal{N}(\bm{\mu}, \bm{\Sigma})$ and reshapes to
+$(M, T, n)$.
+
+\subsubsection{Multivariate Student-$t$ Returns}\label{sec:student_t}
+
+To capture the fat tails observed in empirical return distributions
+\cite{glasserman2003}, we implement a multivariate Student-$t$ model with
+$\nu > 2$ degrees of freedom.
+
+Let $\bm{L}$ be the Cholesky factor of the correlation matrix
+$\bm{\rho} = \bm{L}\bm{L}^\top$.  The sampling procedure is:
+\begin{enumerate}
+  \item Draw $\bm{Z} \sim \mathcal{N}(\bm{0}, \bm{I}_n)$;
+  \item Draw $W \sim \chi^2(\nu)$, independent of $\bm{Z}$;
+  \item Compute
+    $\bm{X} = \bm{\mu} + \bm{\sigma} \odot \bigl(\bm{L}\bm{Z} \cdot
+    \sqrt{\nu / W}\bigr)$.
+\end{enumerate}
+
+The resulting $\bm{X}$ follows a multivariate Student-$t$ distribution
+with mean $\bm{\mu}$, scale $\bm{\sigma}$, correlation $\bm{\rho}$,
+and $\nu$ degrees of freedom.  The scaling factor $\sqrt{\nu/W}$ inflates
+the tails: as $\nu \to \infty$, $\sqrt{\nu/W} \to 1$ and the distribution
+converges to the multivariate normal.
+
+\subsubsection{Markov Regime-Switching Returns}\label{sec:regime}
+
+Following Hamilton \cite{hamilton1989}, we model market regimes as a
+discrete-time Markov chain with $K$ states ($K \in [2,5]$).  Each regime
+$k \in \{1,\dots,K\}$ has its own return parameters:
+\begin{equation}
+  \text{Regime } k: \quad
+  \bm{\mu}_k \in \R^n, \;
+  \bm{\sigma}_k \in \R^n_+, \;
+  \bm{\rho}_k \in \R^{n \times n}.
+\end{equation}
+
+The transition dynamics are governed by the row-stochastic matrix
+$\bm{P} \in \R^{K \times K}$, where $P_{ij} = \Prob(S_{t+1}=j \given S_t=i)$
+and $\sum_j P_{ij} = 1$ for all $i$.
+
+\begin{definition}[Regime-Switching Return Process]
+Let $S_t$ denote the regime at time $t$, with $S_0$ given.
+At each step $t$:
+\begin{enumerate}
+  \item Observe regime $S_t = k$;
+  \item Draw $\bm{R}_t \sim \mathcal{N}(\bm{\mu}_k/12, \, \bm{\Sigma}_k)$
+    where $\bm{\Sigma}_k = \diag(\bm{\sigma}_k/\sqrt{12}) \, \bm{\rho}_k \, \diag(\bm{\sigma}_k/\sqrt{12})$;
+  \item Transition: draw $U \sim \text{Uniform}(0,1)$ and set
+    $S_{t+1} = \min\{j : \sum_{l=1}^{j} P_{k,l} > U\}$.
+\end{enumerate}
+\end{definition}
+
+The regime transition is implemented via cumulative probability thresholds:
+\begin{equation}\label{eq:regime_transition}
+  S_{t+1} = \argmin_j \left\{ \sum_{l=1}^{j} P_{S_t, l} > U_t \right\},
+  \quad U_t \sim \text{Uniform}(0,1).
+\end{equation}
+
+The implementation vectorizes across paths within each regime at each time
+step: for regime $k$, all paths where $S_t = k$ are gathered, their
+returns sampled simultaneously using $\bm{L}_k$ (the Cholesky factor of
+$\bm{\rho}_k$), and scattered back.
+
+\subsubsection{Historical Block Bootstrap}\label{sec:bootstrap}
+
+The block bootstrap \cite{politis1994,cogneau2009} provides a
+non-parametric alternative that preserves short-range autocorrelation.
+Given a historical return matrix $\bm{H} \in \R^{N \times n}$ of $N$
+monthly observations, and a block size $B$ (default $B=12$), the
+procedure is:
+
+\begin{enumerate}
+  \item Compute the number of blocks needed:
+    $n_b = \lceil T / B \rceil$;
+  \item For each path $m$, draw $n_b$ starting indices independently:
+    $s_{m,j} \sim \text{Uniform}\{0, 1, \dots, N-B\}$,
+    $j = 1, \dots, n_b$;
+  \item Concatenate blocks:
+    $\bm{R}_{m} = [\bm{H}_{s_{m,1}:s_{m,1}+B}, \;
+    \bm{H}_{s_{m,2}:s_{m,2}+B}, \; \dots]$;
+  \item Truncate to $T$ steps.
+\end{enumerate}
+
+The implementation is fully vectorized via NumPy fancy indexing: block
+start indices are expanded into a $(M, n_b, B)$ index tensor, which is
+flattened and used to gather from $\bm{H}$ in a single operation.
+
+\begin{remark}
+  Block size $B$ controls the trade-off between preserving autocorrelation
+  (larger $B$) and sampling diversity (smaller $B$).  With $B=12$, one-year
+  seasonal patterns are preserved, which is appropriate for monthly
+  financial data.
+\end{remark}
+
+
+% ------------------------------------------------------------
+\subsection{Inflation Dynamics}\label{sec:inflation}
+
+\subsubsection{Ornstein--Uhlenbeck Process}\label{sec:ou}
+
+Inflation is modeled as a mean-reverting Ornstein--Uhlenbeck (OU) process
+\cite{uhlenbeck1930,vasicek1977}:
+\begin{equation}\label{eq:ou}
+  dI_t = \kappa(\theta - I_t)\,dt + \sigma_I\,dW_t,
+\end{equation}
+where $I_t$ is the annualized inflation rate, $\theta$ is the long-run
+mean (default 3\%), $\kappa$ is the mean-reversion speed (default 0.5),
+$\sigma_I$ is the volatility (default 1\%), and $W_t$ is a standard
+Brownian motion.
+
+The Euler--Maruyama discretization with monthly time step $\Delta t = 1/12$ is:
+\begin{equation}\label{eq:ou_discrete}
+  I_{t+1} = I_t + \kappa(\theta - I_t)\Delta t + \sigma_I \sqrt{\Delta t} \; Z_t,
+  \quad Z_t \sim \mathcal{N}(0,1).
+\end{equation}
+
+The monthly inflation rate applied to nominal values is $I_t / 12$.  The
+cumulative inflation factor at step $t$ is:
+\begin{equation}\label{eq:cum_inflation}
+  \Pi_t = \prod_{s=0}^{t-1} \bigl(1 + I_s / 12\bigr).
+\end{equation}
+
+\subsubsection{Regime-Coupled Inflation}\label{sec:regime_inflation}
+
+When regime-switching returns (\cref{sec:regime}) are active, inflation
+parameters are coupled to the market regime.  Each regime $k$ specifies
+its own $(\theta_k, \sigma_{I,k})$, while $\kappa$ is shared:
+\begin{equation}\label{eq:regime_inflation}
+  I_{t+1} = I_t + \kappa(\theta_{S_t} - I_t)\Delta t +
+  \sigma_{I,S_t} \sqrt{\Delta t} \; Z_t.
+\end{equation}
+
+This couples inflation to market conditions: a ``bear'' regime may
+feature higher inflation mean and volatility, reflecting stagflation
+scenarios \cite{ang2002,guidolin2007}.
+
+% ------------------------------------------------------------
+\subsection{Tax Models}\label{sec:tax}
+
+The framework provides two tax model implementations: a flat-rate
+approximation and a full US federal progressive model.
+
+\subsubsection{Flat-Rate Model}\label{sec:flat_tax}
+
+For quick estimation:
+\begin{equation}\label{eq:flat_tax}
+  \text{Tax} = r \cdot (\text{ordinary income} + \text{LTCG}),
+\end{equation}
+where $r$ is a configurable effective rate (default 22\%).
+
+\subsubsection{US Federal Progressive Tax}\label{sec:us_tax}
+
+The US federal model implements the 2024 tax year brackets from IRS
+Revenue Procedure 2023-34 \cite{irsrevproc2023}.
+
+\paragraph{Ordinary Income.}
+Let $I$ be gross ordinary income and $D$ the standard deduction.  Taxable
+ordinary income is $\bar{I} = \max(I - D, 0)$.  Given $B$ brackets with
+thresholds $\{L_1=0 < L_2 < \cdots < L_B < L_{B+1}=\infty\}$ and
+marginal rates $\{r_1, r_2, \dots, r_B\}$, the ordinary tax is:
+\begin{equation}\label{eq:progressive}
+  \text{Tax}_\text{ord}(\bar{I}) = \sum_{b=1}^{B}
+    r_b \cdot \min\bigl(\max(\bar{I} - L_b, 0),\; L_{b+1} - L_b\bigr).
+\end{equation}
+
+For the 2024 single filer, the brackets and standard deduction are given
+in \cref{tab:brackets}.
+
+\paragraph{Long-Term Capital Gains.}
+LTCG receives preferential rates via a separate bracket schedule:
+\begin{equation}\label{eq:ltcg}
+  \text{Tax}_\text{LTCG}(G) = \sum_{b=1}^{B'}
+    r'_b \cdot \min\bigl(\max(G - L'_b, 0),\; L'_{b+1} - L'_b\bigr).
+\end{equation}
+
+For single filers (2024): 0\% up to \$47,025; 15\% up to \$518,900;
+20\% above.
+
+\paragraph{Net Investment Income Tax (NIIT).}
+The 3.8\% surtax on net investment income applies when modified adjusted
+gross income (MAGI) exceeds a threshold $\tau$:
+\begin{equation}\label{eq:niit}
+  \text{NIIT} = 0.038 \cdot \min\bigl(G, \; \max(\text{MAGI} - \tau, 0)\bigr),
+\end{equation}
+where $\text{MAGI} = I + G$ and $\tau$ depends on filing status
+(\$200,000 single, \$250,000 married filing jointly).
+
+\paragraph{State Income Tax.}
+A flat state overlay is applied on total income:
+\begin{equation}\label{eq:state_tax}
+  \text{Tax}_\text{state} = r_s \cdot (I + G),
+  \quad r_s \in [0, 0.15].
+\end{equation}
+
+\paragraph{Total Annual Tax.}
+\begin{equation}\label{eq:total_tax}
+  \text{Tax}_\text{total} = \text{Tax}_\text{ord}(\bar{I}) +
+  \text{Tax}_\text{LTCG}(G) + \text{NIIT} + \text{Tax}_\text{state}.
+\end{equation}
+
+\paragraph{Vectorized Implementation.}
+The bracket computation is vectorized across all $M$ paths simultaneously.
+For each bracket $b$, the taxable amount in that bracket is computed as a
+single NumPy array operation on the $(M,)$-dimensional income vector,
+avoiding any per-path Python loop.
+
+\paragraph{Tax Application to Positions.}
+Year-end tax liability is deducted proportionally from all positions:
+\begin{equation}\label{eq:tax_deduction}
+  \bm{P}_{m,a,i} \leftarrow \bm{P}_{m,a,i} \cdot
+  \Bigl(1 - \frac{\text{Tax}_m}{\max(W_m, 1)}\Bigr),
+\end{equation}
+where $W_m = \sum_{a,i} P_{m,a,i}$ is total wealth for path $m$.
+
+% ------------------------------------------------------------
+\subsection{Required Minimum Distributions}\label{sec:rmd}
+
+For tax-deferred accounts (traditional IRA/401k), the IRS mandates RMDs
+beginning at age 73 \cite{irs590b}.  The annual RMD is:
+\begin{equation}\label{eq:rmd}
+  \text{RMD}(\text{age}) =
+  \frac{B_{\text{prior year}}}{\delta(\text{age})},
+\end{equation}
+where $B_{\text{prior year}}$ is the December~31 balance of the prior
+year and $\delta(\text{age})$ is the divisor from the IRS Uniform
+Lifetime Table (\cref{tab:rmd}).
+
+In the engine, RMDs are enforced at the December step (month~12).  Any
+traditional account withdrawals made during the year for spending count
+toward RMD satisfaction.  If a shortfall remains, forced withdrawals are
+executed proportionally from traditional account positions.
+
+% ------------------------------------------------------------
+\subsection{Spending Policies}\label{sec:spending}
+
+All spending policies implement a common protocol:
+\begin{equation}
+  s_t = f(\text{state}_t) \in \R^M_+,
+\end{equation}
+returning a vector of monthly spending amounts across all $M$ paths.
+
+\subsubsection{Constant Real}\label{sec:constant_real}
+
+The simplest policy maintains purchasing power:
+\begin{equation}\label{eq:constant_real}
+  s_t = s_0 \cdot \Pi_t,
+\end{equation}
+where $s_0$ is the base monthly spending in today's dollars and $\Pi_t$
+is the cumulative inflation factor from \cref{eq:cum_inflation}.
+
+\subsubsection{Percent of Portfolio}\label{sec:pct_portfolio}
+
+Spending is a fixed fraction of current wealth:
+\begin{equation}\label{eq:pct_portfolio}
+  s_t = \frac{r}{12} \cdot \max(W_t, 0),
+\end{equation}
+where $r$ is the annual withdrawal rate (e.g., 0.04).
+
+\subsubsection{Guyton--Klinger Guardrails}\label{sec:guardrails}
+
+The guardrail policy \cite{guyton2006} adjusts spending based on the
+current withdrawal rate relative to the initial rate $r_0$:
+
+\begin{definition}[Guardrail Decision Rules]
+Let $\hat{r}_t = 12 s_t / W_t$ be the current annualized withdrawal rate.
+\begin{itemize}
+  \item \textbf{Prosperity Rule:} If $\hat{r}_t < r_0(1 - \alpha_u)$,
+    set $s_{t+1} = s_t (1 + \gamma_u)$.
+  \item \textbf{Capital Preservation Rule:} If $\hat{r}_t > r_0(1 + \alpha_l)$,
+    set $s_{t+1} = s_t (1 - \gamma_l)$.
+\end{itemize}
+where $\alpha_u, \alpha_l$ are threshold parameters (default 20\%) and
+$\gamma_u, \gamma_l$ are adjustment magnitudes (default 10\%).
+\end{definition}
+
+The initial spending at the start of retirement is:
+\begin{equation}
+  s_{\text{retire}} = \frac{r_0}{12} \cdot W_{\text{retire}}.
+\end{equation}
+
+\subsubsection{Variable Percentage Withdrawal (VPW)}\label{sec:vpw}
+
+VPW \cite{bogleheads2023vpw} sets the withdrawal rate inversely
+proportional to the remaining planning horizon:
+\begin{equation}\label{eq:vpw}
+  r_t = \text{clamp}\!\left(\frac{1}{T_{\text{end}} - a_t}, \;
+  r_{\min}, \; r_{\max}\right),
+  \quad s_t = \frac{r_t}{12} \cdot \max(W_t, 0),
+\end{equation}
+where $a_t$ is the current age, $T_{\text{end}}$ is the planning end age,
+and $r_{\min} = 0.03$, $r_{\max} = 0.15$ are bounds.
+
+\subsubsection{Floor-Ceiling}\label{sec:floor_ceiling}
+
+The floor-ceiling policy \cite{vanguard2021} clamps
+portfolio-proportional spending between inflation-adjusted bounds:
+\begin{equation}\label{eq:floor_ceiling}
+  s_t = \text{clamp}\!\left(\frac{r}{12} \cdot W_t, \;
+  F \cdot \Pi_t, \; C \cdot \Pi_t\right),
+\end{equation}
+where $F$ is the monthly floor (default \$3{,}000), $C$ is the monthly
+ceiling (default \$10{,}000), and both are in today's dollars.
+
+
+% ------------------------------------------------------------
+\subsection{Roth Conversion Strategies}\label{sec:roth}
+
+Roth conversions move balances from traditional (tax-deferred) accounts
+to Roth (tax-free) accounts, triggering ordinary income tax on the
+converted amount.  Two strategies are supported:
+
+\paragraph{Fixed Amount.}
+Convert a constant annual amount $A$ during the conversion window
+$[a_{\mathrm{start}}, a_{\mathrm{end}})$:
+\begin{equation}
+  C_t = \min(A, \; B_{\text{trad},t}),
+\end{equation}
+where $B_{\text{trad},t}$ is the available traditional balance.  This
+strategy is straightforward but does not adapt to the individual's
+current tax situation.
+
+\paragraph{Fill-Bracket.}
+Convert up to the ceiling of a target tax bracket, minus current
+ordinary income:
+\begin{equation}\label{eq:fill_bracket}
+  C_t = \min\!\bigl(\max(\text{ceiling}(r^*) - I_t, 0), \;
+  B_{\text{trad},t}\bigr),
+\end{equation}
+where $\text{ceiling}(r^*)$ is the income level at which the marginal
+rate exceeds the target rate $r^*$, and $I_t$ is the year-to-date
+ordinary income (including RMDs and other withdrawals).
+
+The bracket ceiling function maps a target marginal rate to the
+corresponding income threshold.  For the 2024 single filer with
+$r^* = 0.22$, the ceiling is the top of the 22\% bracket
+(\$100,525) plus the standard deduction (\$14,600), yielding
+\$115,125 in gross income.
+
+\paragraph{Conversion Mechanics.}
+Conversions are executed at year-end (step where month = 12), after
+RMD enforcement and before annual tax computation.  The converted
+amount is added to that year's taxable ordinary income.  The transfer
+is performed pro-rata across assets within each traditional account:
+\begin{equation}\label{eq:roth_transfer}
+  P_{m,\text{trad},i} \leftarrow P_{m,\text{trad},i}
+    \cdot \left(1 - \frac{C_m}{B_{m,\text{trad}}}\right),
+  \quad
+  P_{m,\text{roth},i} \mathrel{+}= P_{m,\text{trad},i}
+    \cdot \frac{C_m}{B_{m,\text{trad}}},
+\end{equation}
+preserving the asset allocation of the converted positions.
+
+\paragraph{Tax Implications.}
+Roth conversions create a short-term tax cost (higher ordinary income
+in the conversion year) in exchange for a long-term benefit (tax-free
+growth and withdrawals).  The fill-bracket strategy is particularly
+effective during the ``gap years'' between retirement and RMD onset
+(ages $\sim$60--72), when ordinary income may be low, allowing
+conversions at favorable marginal rates.
+
+\paragraph{Interaction with RMDs.}
+Since conversions execute after RMD satisfaction, the year-to-date
+income $I_t$ already includes any RMD withdrawals.  This ensures the
+fill-bracket strategy correctly accounts for the RMD's tax impact
+when computing the remaining bracket headroom.
+
+
+% ============================================================
+\section{Computational Architecture}\label{sec:arch}
+
+% ------------------------------------------------------------
+\subsection{Tensor Representation}\label{sec:tensor}
+
+The engine maintains portfolio state as a three-dimensional NumPy
+\cite{harris2020} array:
+\begin{equation}
+  \bm{P} \in \R^{M \times A \times n},
+\end{equation}
+where $M$ is the number of Monte Carlo paths, $A$ is the number of
+accounts (e.g., taxable, traditional, Roth), and $n$ is the number of
+asset classes.  Each element $P_{m,a,i}$ represents the dollar value of
+asset $i$ in account $a$ for path $m$.
+
+Derived quantities are computed via axis reductions:
+\begin{align}
+  \text{Balance}_{m,a} &= \sum_{i=1}^{n} P_{m,a,i}
+    \quad \text{(account balances, shape } (M, A)\text{)}, \\
+  W_m &= \sum_{a=1}^{A}\sum_{i=1}^{n} P_{m,a,i}
+    \quad \text{(total wealth, shape } (M,)\text{)}.
+\end{align}
+
+Returns are pre-generated as:
+\begin{equation}
+  \bm{R} \in \R^{M \times T \times n},
+\end{equation}
+and inflation rates as $\bm{\pi} \in \R^{M \times T}$.
+
+\begin{remark}[Memory Considerations]
+  For $M = 20{,}000$ paths, $A = 3$ accounts, $n = 10$ assets, and
+  $T = 480$ steps (40 years), the position tensor requires
+  $20{,}000 \times 3 \times 10 \times 8 \approx 4.6$ MB, and the return
+  tensor requires $20{,}000 \times 480 \times 10 \times 8 \approx 732$ MB.
+  The return tensor dominates memory usage.
+\end{remark}
+
+% ------------------------------------------------------------
+\subsection{Engine Pipeline}\label{sec:pipeline}
+
+The simulation loop executes the following twelve-step pipeline at each
+monthly time step $t = 0, 1, \dots, T-1$.
+
+\begin{algorithm}[H]
+\caption{Monthly Simulation Step}
+\label{alg:engine}
+\DontPrintSemicolon
+\KwInput{State $(\bm{P}, \Pi, \bm{d})$, returns $\bm{R}_{:,t,:}$,
+  inflation $\bm{\pi}_{:,t}$, timeline, policies}
+
+\BlankLine
+\Comment{Step 1: Apply asset returns}
+$\bm{P}_{m,a,i} \leftarrow \bm{P}_{m,a,i} \cdot
+  (1 + R_{m,t,i}) \quad \forall m,a,i$ \;
+$\bm{P} \leftarrow \max(\bm{P}, 0)$ \;
+
+\BlankLine
+\Comment{Step 1b: Investment fee drag}
+$f \leftarrow (\text{expense\_ratio} + \text{aum\_fee} +
+  \text{advisory\_fee}) / 12$ \;
+$\bm{P} \leftarrow \bm{P} \cdot (1 - f)$ \;
+
+\BlankLine
+\Comment{Step 2: Accumulate inflation}
+$\Pi_m \leftarrow \Pi_m \cdot (1 + \pi_{m,t}) \quad \forall m$ \;
+
+\BlankLine
+\Comment{Step 2a: Compute target weights (static or glide path)}
+$\bm{w} \leftarrow \text{target\_weights}(t)$ \;
+
+\BlankLine
+\Comment{Step 3: Contributions (pre-retirement)}
+\If{$t < t_{\text{income\_end}}$}{
+  $\bm{P}_{m,a,i} \mathrel{+}= c_a \cdot g_t \cdot w_i
+    \quad \forall m, a, i$ \;
+}
+
+\BlankLine
+\Comment{Step 4: Discrete events}
+\ForEach{event $e$ at step $t$}{
+  Apply inflow or withdraw outflow \;
+}
+
+\BlankLine
+\Comment{Step 5: Rebalancing}
+\If{threshold triggered \textbf{or} calendar month}{
+  Rebalance positions to target weights $\bm{w}$ \;
+}
+
+\BlankLine
+\Comment{Step 6: Retirement spending \& withdrawals}
+\If{$t \geq t_{\text{retire}}$}{
+  $\bm{s} \leftarrow \text{spending\_policy.compute(state)}$ \;
+  Subtract guaranteed income from $\bm{s}$ \;
+  Execute withdrawals in account priority order \;
+  Track traditional withdrawals for tax \;
+}
+
+\BlankLine
+\Comment{Step 6b: RMD enforcement (December, age $\geq 73$)}
+\If{month $= 12$ \textbf{and} age $\geq 73$}{
+  Force withdraw any RMD shortfall from traditional accounts \;
+}
+
+\BlankLine
+\Comment{Step 6c: Roth conversions (December, within window)}
+\If{Roth enabled \textbf{and} month $= 12$ \textbf{and} in window}{
+  Compute conversion amount (fixed or fill-bracket) \;
+  Move positions from traditional to Roth, pro-rata \;
+  Add to ordinary income for tax \;
+}
+
+\BlankLine
+\Comment{Step 7: Year-end tax computation (December)}
+\If{month $= 12$}{
+  $\bm{\tau} \leftarrow \text{tax\_model}(\text{income}, \text{LTCG})$ \;
+  $\bm{\tau} \mathrel{+}= \text{state\_tax} + \text{NIIT}$ \;
+  Apply $\bm{\tau}$ proportionally to all positions \;
+  Reset annual accumulators \;
+}
+
+\BlankLine
+\Comment{Step 8: Depletion check}
+$d_m \leftarrow (W_m \leq 0) \quad \forall m$ \;
+
+\BlankLine
+\Comment{Step 9: Record snapshot}
+$\text{wealth\_history}_{m,t+1} \leftarrow W_m \quad \forall m$ \;
+\end{algorithm}
+
+Key vectorization patterns used throughout the pipeline:
+
+\paragraph{Broadcasting returns across accounts.}
+Asset returns have shape $(M, n)$ and positions have shape $(M, A, n)$.
+Broadcasting is achieved by inserting a size-1 axis:
+\begin{equation}
+  \bm{P} \leftarrow \bm{P} \odot (1 + \bm{R}_{:,t,:})[:, \texttt{newaxis}, :].
+\end{equation}
+
+\paragraph{Proportional tax deduction.}
+Tax has shape $(M,)$, requiring two axis insertions:
+\begin{equation}
+  \bm{P} \leftarrow \bm{P} \odot
+  \bigl(1 - \bm{\tau} / \max(\bm{W}, 1)\bigr)[:, \texttt{newaxis}, \texttt{newaxis}].
+\end{equation}
+
+\paragraph{Masked withdrawal.}
+For withdrawal from a single account $a$ by amount $\bm{v} \in \R^M$:
+\begin{equation}
+  \text{frac}_m = \min(v_m / \max(B_{m,a}, 1), 1), \quad
+  P_{m,a,i} \leftarrow P_{m,a,i} \cdot (1 - \text{frac}_m)
+  \quad \forall i.
+\end{equation}
+
+% ------------------------------------------------------------
+\subsection{Variance Reduction via Antithetic Variates}\label{sec:antithetic}
+
+Antithetic variates \cite{hammersley1956,glasserman2003} reduce variance
+by pairing each random draw with its reflection about the mean.
+
+\begin{proposition}[Antithetic Variance Reduction]
+\label{prop:antithetic}
+Let $\bm{X} \sim \mathcal{N}(\bm{\mu}, \bm{\Sigma})$ and define
+$\tilde{\bm{X}} = 2\bm{\mu} - \bm{X}$.  Then $\tilde{\bm{X}}$ has
+the same distribution as $\bm{X}$, and for any function $g$ such that
+$\E[g(\bm{X})^2] < \infty$:
+\begin{equation}
+  \Var\!\left(\frac{g(\bm{X}) + g(\tilde{\bm{X}})}{2}\right) \leq
+  \Var(g(\bm{X})).
+\end{equation}
+Equality holds if and only if $\Cov(g(\bm{X}), g(\tilde{\bm{X}})) = 0$.
+For monotone $g$, the covariance is negative, yielding strict
+improvement.
+\end{proposition}
+
+\begin{proof}
+Since $\bm{X} - \bm{\mu}$ and $\bm{\mu} - \tilde{\bm{X}} = \bm{X} - \bm{\mu}$,
+the pair $(\bm{X}, \tilde{\bm{X}})$ is identically distributed, so
+$\E[g(\bm{X})] = \E[g(\tilde{\bm{X}})]$.  For the average estimator:
+\begin{align}
+  \Var\!\left(\frac{g(\bm{X})+g(\tilde{\bm{X}})}{2}\right)
+  &= \frac{1}{4}\bigl[\Var(g(\bm{X})) + \Var(g(\tilde{\bm{X}})) +
+     2\Cov(g(\bm{X}),g(\tilde{\bm{X}}))\bigr] \\
+  &= \frac{1}{2}\Var(g(\bm{X})) +
+     \frac{1}{2}\Cov(g(\bm{X}),g(\tilde{\bm{X}})).
+\end{align}
+Since $\Cov(g(\bm{X}),g(\tilde{\bm{X}})) \leq 0$ for monotone $g$
+(because $\bm{X}$ and $\tilde{\bm{X}}$ are negatively correlated), the
+result follows.
+\end{proof}
+
+\paragraph{Implementation.}
+When antithetic mode is enabled, $M$ must be even.  The engine generates
+$M/2$ ``base'' return paths and constructs the antithetic paths by
+reflection:
+\begin{equation}
+  \bm{R}^{\text{anti}}_{m,t,i} = 2\mu_i - \bm{R}^{\text{base}}_{m,t,i},
+  \quad m = 1, \dots, M/2.
+\end{equation}
+
+For the OU inflation process, independent antithetic noise is used:
+$Z^{\text{anti}} = -Z^{\text{base}}$.  For regime-switching, the
+antithetic paths share the same regime sequence as their base
+counterparts.
+
+% ------------------------------------------------------------
+\subsection{Withdrawal Logic}\label{sec:withdrawal}
+
+Withdrawals follow a configurable account priority order (default:
+taxable $\to$ traditional $\to$ Roth), implementing the standard
+tax-efficient withdrawal sequencing strategy.
+
+\begin{definition}[Sequential Withdrawal]
+Given a spending need $v_m$ for path $m$ and account priority order
+$(a_1, a_2, \dots, a_A)$, the withdrawal from each account is:
+\begin{align}
+  w_{m,a_1} &= \min(v_m, \; B_{m,a_1}), \\
+  w_{m,a_k} &= \min\!\left(v_m - \sum_{j=1}^{k-1} w_{m,a_j}, \;
+    B_{m,a_k}\right), \quad k = 2, \dots, A.
+\end{align}
+\end{definition}
+
+Each withdrawal is executed by reducing positions proportionally across
+all assets within the account, preserving the current asset allocation:
+\begin{equation}\label{eq:withdrawal_exec}
+  P_{m,a,i} \leftarrow P_{m,a,i} \cdot
+    \left(1 - \frac{w_{m,a}}{\max(B_{m,a}, 1)}\right)
+    \quad \forall i \in \{1,\dots,n\}.
+\end{equation}
+
+\paragraph{Tax Tracking.}
+Withdrawals from traditional (tax-deferred) accounts generate ordinary
+income.  The engine tracks cumulative traditional withdrawals during
+each calendar year for three purposes:
+\begin{enumerate}
+  \item Year-end federal income tax computation;
+  \item RMD satisfaction tracking;
+  \item Roth conversion bracket headroom calculation.
+\end{enumerate}
+
+Withdrawals from Roth accounts are tax-free, and withdrawals from
+taxable accounts generate long-term capital gains (tracked separately).
+
+% ------------------------------------------------------------
+\subsection{Rebalancing}\label{sec:rebalancing}
+
+Two rebalancing strategies are supported:
+
+\paragraph{Calendar Rebalancing.}
+Positions are rebalanced to target weights at fixed calendar months
+(default: January and July):
+\begin{equation}
+  \text{Rebalance if } (t \bmod 12) + 1 \in \mathcal{M}_{\text{rebal}},
+\end{equation}
+where $\mathcal{M}_{\text{rebal}} = \{1, 7\}$ by default.
+
+\paragraph{Threshold Rebalancing.}
+Rebalancing is triggered only when the maximum absolute drift from
+target weights exceeds a threshold $\tau$ (default 5\%):
+\begin{equation}\label{eq:threshold_rebal}
+  \text{Rebalance path } m \text{ if }
+  \max_{a,i} \left| \frac{P_{m,a,i}}{B_{m,a}} - w_i \right| > \tau.
+\end{equation}
+
+In practice, the drift is computed at the portfolio level.  Let
+$\hat{w}_i = \sum_a P_{m,a,i} / W_m$ be the current portfolio-level
+weight for asset $i$.  The $L^\infty$ drift is:
+\begin{equation}
+  d_m = \max_i |\hat{w}_i - w_i|.
+\end{equation}
+
+Threshold rebalancing reduces transaction costs and is empirically shown
+to produce comparable or superior results to frequent calendar
+rebalancing.
+
+\paragraph{Rebalancing Execution.}
+For each account $a$ and each path $m$ requiring rebalancing:
+\begin{equation}\label{eq:rebalance_exec}
+  P_{m,a,i} \leftarrow B_{m,a} \cdot w_i \quad \forall i,
+\end{equation}
+i.e., each account is set to hold the target weights proportional to its
+current balance.
+
+% ------------------------------------------------------------
+\subsection{Glide Path}\label{sec:glide}
+
+A glide path shifts the target asset allocation over time, typically
+from equity-heavy (accumulation) to bond-heavy (decumulation).  The
+implementation uses linear interpolation between start and end weights:
+
+\begin{definition}[Linear Glide Path]
+Given start weights $\bm{w}_s$ at age $a_s$ and end weights $\bm{w}_e$
+at age $a_e$, the target weights at age $a$ are:
+\begin{equation}\label{eq:glide}
+  \bm{w}(a) = \begin{cases}
+    \bm{w}_s & \text{if } a \leq a_s, \\
+    \bm{w}_s + \frac{a - a_s}{a_e - a_s}
+      (\bm{w}_e - \bm{w}_s) & \text{if } a_s < a < a_e, \\
+    \bm{w}_e & \text{if } a \geq a_e.
+  \end{cases}
+\end{equation}
+\end{definition}
+
+A common glide path shifts from 80/20 stocks/bonds at age 40 to
+40/60 at age 70, reducing equity exposure by approximately 1.3
+percentage points per year.
+
+% ------------------------------------------------------------
+\subsection{Guaranteed Income}\label{sec:gi}
+
+Guaranteed income streams (Social Security, pensions, annuities) reduce
+the portfolio withdrawal need during retirement.
+
+\begin{definition}[Guaranteed Income Stream]
+Each stream $j$ is characterized by:
+\begin{itemize}
+  \item Monthly benefit $g_j$ in today's dollars;
+  \item Start age $a_j^{\text{start}}$ and optional end age
+    $a_j^{\text{end}}$ (default: lifetime);
+  \item Annual COLA rate $c_j$ (default: 0\%).
+\end{itemize}
+\end{definition}
+
+The COLA rate is converted to a monthly compounding factor:
+\begin{equation}
+  c_j^{(\text{mo})} = (1 + c_j)^{1/12} - 1.
+\end{equation}
+
+At each retirement step $t$, the net spending need after guaranteed
+income is:
+\begin{equation}\label{eq:gi}
+  s'_t = \max\!\left(s_t - \sum_{j \in \mathcal{G}_t}
+  g_j \cdot (1 + c_j^{(\text{mo})})^{t - t_j^{\text{start}}}
+  \cdot \Pi_t, \; 0\right),
+\end{equation}
+where $\mathcal{G}_t$ is the set of active streams at step $t$ and
+$t_j^{\text{start}}$ is the step corresponding to $a_j^{\text{start}}$.
+
+\paragraph{Common Streams.}
+Typical guaranteed income streams include:
+\begin{itemize}
+  \item \textbf{Social Security}: starts at ages 62--70, with COLA
+    typically 2--3\%;
+  \item \textbf{Pension}: employer-defined benefit, may or may not
+    include COLA;
+  \item \textbf{Annuity}: purchased income, often with no COLA
+    (fixed nominal).
+\end{itemize}
+
+The presence of substantial guaranteed income significantly impacts
+portfolio withdrawal rates: a retiree with \$3{,}000/month in Social
+Security needs far less from the portfolio than one without, enabling
+more aggressive asset allocation and higher success probabilities.
+
+% ------------------------------------------------------------
+\subsection{Investment Fees}\label{sec:fees}
+
+Three fee components are modeled as annual rates, converted to monthly
+drag on positions:
+
+\begin{definition}[Fee Structure]
+\begin{itemize}
+  \item \textbf{Expense Ratio} ($f_e$): Fund-level fees (e.g., 0.03\%
+    for index funds, 0.5--1\% for active);
+  \item \textbf{AUM Fee} ($f_a$): Platform or custodian fee on assets
+    under management;
+  \item \textbf{Advisory Fee} ($f_v$): Financial advisor fee.
+\end{itemize}
+\end{definition}
+
+The combined monthly drag is:
+\begin{equation}\label{eq:fees}
+  f_{\text{mo}} = \frac{f_e + f_a + f_v}{12},
+  \quad
+  \bm{P} \leftarrow \bm{P} \cdot (1 - f_{\text{mo}}).
+\end{equation}
+
+\begin{remark}[Impact of Fees]
+A seemingly small 1\% annual fee compounds significantly over a 30-year
+retirement.  With no fees, a \$1M portfolio earning 7\% grows to
+\$7.6M over 30 years.  With 1\% in total fees (net 6\%), it reaches
+only \$5.7M---a 25\% reduction in terminal wealth.  The engine applies
+fees monthly to capture this compounding effect accurately.
+\end{remark}
+
+% ------------------------------------------------------------
+\subsection{Complexity Analysis}\label{sec:complexity}
+
+\begin{table}[H]
+\centering
+\caption{Computational complexity of major operations.}
+\label{tab:complexity}
+\begin{tabular}{@{}ll@{}}
+\toprule
+Operation & Complexity per step \\
+\midrule
+Return application & $O(M \cdot A \cdot n)$ \\
+Inflation update & $O(M)$ \\
+Rebalancing & $O(M \cdot A \cdot n)$ \\
+Spending computation & $O(M)$ \\
+Withdrawal execution & $O(M \cdot A \cdot n)$ \\
+Tax computation & $O(M \cdot B)$ where $B$ = brackets \\
+\midrule
+Full simulation & $O(T \cdot M \cdot A \cdot n)$ \\
+OAT sensitivity & $O(2P \cdot T \cdot M \cdot A \cdot n)$ \\
+SWR bisection & $O(\log(\Delta/\epsilon) \cdot T \cdot M \cdot A \cdot n)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+where $P$ is the number of perturbable parameters, $\Delta$ is the
+search range, and $\epsilon$ is the convergence tolerance.
+
+
+% ============================================================
+\section{Configuration and Validation System}\label{sec:config}
+
+% ------------------------------------------------------------
+\subsection{Pydantic v2 Config Models}\label{sec:pydantic}
+
+All configuration is managed through Pydantic v2 \cite{pydantic2024}
+\texttt{BaseModel} classes with strict validation:
+
+\begin{itemize}
+  \item \textbf{PlanConfig}: Demographics (ages), account definitions,
+    income, spending goals, discrete events, guaranteed income streams.
+  \item \textbf{MarketAssumptions}: Asset classes, returns, volatilities,
+    correlation matrix, inflation parameters, return model selection,
+    fee structure, glide path.
+  \item \textbf{PolicyBundle}: Spending policy, rebalancing strategy,
+    withdrawal order, tax model, state tax rate, NIIT flag, Roth
+    conversion settings.
+  \item \textbf{SimulationConfig}: Path count, seed, antithetic flag,
+    preset selection, stress scenarios.
+\end{itemize}
+
+\paragraph{Cross-Field Validation.}
+Pydantic model validators enforce:
+\begin{enumerate}
+  \item Correlation matrix symmetry: $\rho_{ij} = \rho_{ji}$, with
+    tolerance $10^{-8}$;
+  \item Diagonal unity: $\rho_{ii} = 1$ for all $i$;
+  \item Positive semi-definiteness (implicitly via Cholesky in return models);
+  \item Transition matrix row-stochasticity:
+    $|\sum_j P_{ij} - 1| < 10^{-6}$;
+  \item Age ordering: current\_age $<$ retirement\_age $<$ end\_age;
+  \item Target weight normalization:
+    $|\sum_i w_i - 1| < 10^{-6}$.
+\end{enumerate}
+
+% ------------------------------------------------------------
+\subsection{Reproducibility}\label{sec:reproducibility}
+
+\paragraph{Deterministic RNG.}
+The engine uses NumPy's PCG64DXSM \cite{oneill2014} generator, seeded
+from the user-provided seed:
+\begin{lstlisting}[language=Python,numbers=none]
+rng = numpy.random.Generator(numpy.random.PCG64DXSM(seed))
+\end{lstlisting}
+
+PCG64DXSM provides a period of $2^{128}$, excellent equidistribution,
+and fast generation.  The same seed produces bit-identical return tensors
+across runs, ensuring perfect reproducibility.
+
+\paragraph{Config Hashing.}
+Every simulation result embeds a SHA-256 hash of the serialized
+configuration, enabling provenance tracking:
+\begin{equation}
+  h = \text{SHA-256}\bigl(\text{JSON}(\text{plan}, \text{market},
+    \text{policies}, \text{sim\_config})\bigr).
+\end{equation}
+
+
+% ============================================================
+\section{Analytics Framework}\label{sec:analytics}
+
+% ------------------------------------------------------------
+\subsection{Sensitivity Analysis}\label{sec:sensitivity}
+
+\subsubsection{One-at-a-Time (OAT) Perturbation}\label{sec:oat}
+
+The OAT method varies one parameter at a time while holding all others
+at their baseline values.  For each parameter $p_i$ with baseline value
+$v_i$:
+
+\begin{enumerate}
+  \item Compute perturbed values:
+    \begin{equation}
+      v_i^- = v_i(1 - \delta), \quad
+      v_i^+ = v_i(1 + \delta),
+    \end{equation}
+    where $\delta = 0.10$ (10\%) for multiplicative parameters.
+    Additive parameters (retirement age, state tax rate) use fixed deltas.
+  \item Run simulations at $v_i^-$ and $v_i^+$;
+  \item Compute impact:
+    $\Delta_i = p_{\text{success}}(v_i^+) - p_{\text{success}}(v_i^-)$.
+\end{enumerate}
+
+The results are sorted by $|\Delta_i|$ to produce a tornado chart.
+
+\paragraph{Parallel Execution.}
+Perturbation runs are independent and execute via Python's
+\texttt{Process\-Pool\-Executor} with configurable
+\texttt{max\_workers}.
+Path counts are capped at 2{,}000 for OAT analysis to balance speed and
+precision.
+
+\subsubsection{Two-Dimensional Grid Search}\label{sec:2d}
+
+For interaction analysis, a 2D grid evaluates success probability over
+parameter pairs:
+\begin{equation}
+  \text{grid}[i,j] = p_{\text{success}}(x_i, y_j),
+  \quad x_i \in \{x_1,\dots,x_{n_x}\}, \;
+  y_j \in \{y_1,\dots,y_{n_y}\}.
+\end{equation}
+
+Grid values are generated via \texttt{numpy.linspace}.  Path counts are
+capped at 1{,}000 per cell.
+
+% ------------------------------------------------------------
+\subsection{Safe Withdrawal Rate Finder}\label{sec:swr}
+
+The safe withdrawal rate (SWR) is the maximum monthly spending $s^*$
+such that the success probability meets a target $p^*$ (default 95\%):
+\begin{equation}\label{eq:swr}
+  s^* = \max\{s : p_{\text{success}}(s) \geq p^*\}.
+\end{equation}
+
+\begin{proposition}[Monotonicity]
+Under standard assumptions (non-negative returns and spending), the
+success probability $p_{\text{success}}(s)$ is monotonically
+non-increasing in the spending level $s$.
+\end{proposition}
+
+This monotonicity guarantees that bisection converges.  The algorithm
+searches $[s_{\min}, s_{\max}]$ with tolerance $\epsilon$ (default \$50):
+
+\begin{algorithm}[H]
+\caption{Bisection SWR Finder}
+\label{alg:swr}
+\DontPrintSemicolon
+\KwInput{$s_{\min}, s_{\max}, p^*, \epsilon, N_{\max}$}
+\KwOutput{$s^*$ (safe monthly spending)}
+$\textit{lo} \leftarrow s_{\min}$; \;
+$\textit{hi} \leftarrow s_{\max}$; \;
+\For{$k = 1$ \KwTo $N_{\max}$}{
+  $\textit{mid} \leftarrow (\textit{lo} + \textit{hi}) / 2$ \;
+  $p \leftarrow \text{simulate}(\text{spending} = \textit{mid})$ \;
+  \eIf{$p \geq p^*$}{
+    $\textit{lo} \leftarrow \textit{mid}$ \;
+  }{
+    $\textit{hi} \leftarrow \textit{mid}$ \;
+  }
+  \lIf{$\textit{hi} - \textit{lo} < \epsilon$}{\textbf{break}}
+}
+\Return $\textit{lo}$ \;
+\end{algorithm}
+
+The number of iterations is bounded by
+$\lceil\log_2((s_{\max} - s_{\min}) / \epsilon)\rceil$.  With default
+parameters ($s_{\max} = 2s_0$, $\epsilon = \$50$), this is at most
+$\lceil\log_2(2s_0/50)\rceil$ iterations.
+
+\paragraph{Output.}
+The SWR finder returns:
+\begin{itemize}
+  \item Maximum safe monthly spending $s^*$;
+  \item Implied annual withdrawal rate:
+    $r^* = 12 s^* / \sum_a B_a^{(0)}$;
+  \item Achieved success probability at $s^*$;
+  \item Number of bisection iterations.
+\end{itemize}
+
+% ------------------------------------------------------------
+\subsection{Distributional Metrics}\label{sec:metrics}
+
+\subsubsection{Success Probability and Standard Error}
+
+The primary output metric is the fraction of paths with non-zero wealth
+throughout retirement:
+\begin{equation}
+  \hat{p} = \frac{1}{M} \sum_{m=1}^{M}
+  \mathbf{1}\!\left[\min_{t \geq t_\text{retire}} W_{m,t} > 0\right].
+\end{equation}
+
+The Monte Carlo standard error is:
+\begin{equation}\label{eq:mc_se}
+  \text{SE}(\hat{p}) = \sqrt{\frac{\hat{p}(1-\hat{p})}{M}}.
+\end{equation}
+
+For $M = 5{,}000$ and $\hat{p} = 0.50$ (worst case), $\text{SE} \approx
+0.71\%$.  The ``deep'' preset ($M = 20{,}000$ with antithetic) achieves
+$\text{SE} \approx 0.25\%$ (effective due to variance reduction).
+
+\subsubsection{Maximum Drawdown Distribution}
+
+For each path $m$, the maximum drawdown is:
+\begin{equation}
+  \text{MDD}_m = \max_{0 \leq t \leq T}
+  \frac{\bar{W}_{m,t} - W_{m,t}}{\max(\bar{W}_{m,t}, 1)},
+\end{equation}
+where $\bar{W}_{m,t} = \max_{0 \leq s \leq t} W_{m,s}$ is the running
+maximum.  The distribution $\{\text{MDD}_m\}_{m=1}^M$ is summarized by
+percentiles (5th, 25th, 50th, 75th, 95th) and mean.
+
+\subsubsection{Spending Volatility}
+
+Monthly spending volatility during retirement is measured by the
+coefficient of variation of spending changes:
+\begin{equation}
+  \text{CV}_m = \frac{\text{sd}(\{s_{m,t+1} - s_{m,t}\}_{t \geq t_\text{retire}})}
+  {\max(\bar{s}_m, 1)},
+\end{equation}
+where $\bar{s}_m$ is the mean monthly spending for path $m$.
+
+\subsubsection{Ruin-by-Age Curve}
+
+The cumulative ruin curve gives the fraction of paths depleted by each
+age:
+\begin{equation}
+  F(\text{age}) = \frac{1}{M} \sum_{m=1}^{M}
+  \mathbf{1}\!\left[\exists\, t \leq t(\text{age}): W_{m,t} \leq 0\right].
+\end{equation}
+
+This is computed efficiently via cumulative logical-OR on the depletion
+indicator.
+
+
+% ============================================================
+\section{Empirical Validation}\label{sec:validation}
+
+% ------------------------------------------------------------
+\subsection{Golden Test Suite}\label{sec:golden}
+
+The framework maintains a suite of golden tests that verify exact
+numerical outputs for fixed seeds.  These tests detect any unintentional
+changes to the simulation engine, serving as regression guards.
+
+\begin{table}[H]
+\centering
+\caption{Golden test values (seed=42, 5{,}000 paths).}
+\label{tab:golden}
+\begin{tabular}{@{}llr@{}}
+\toprule
+Scenario & Return Model & Success Probability \\
+\midrule
+Basic retirement (65--95) & MVN & 47.94\% \\
+Regime-switching (3 regimes) & Markov & 32.82\% \\
+Antithetic variates & MVN (antithetic) & 49.90\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These values are verified to exact floating-point precision across Python
+3.11, 3.12, and 3.13 on the CI matrix.  Any change to the engine that
+alters these values requires explicit golden value updates with
+justification.
+
+\paragraph{Interpretation of Golden Values.}
+The basic retirement scenario (47.94\% success) reflects a moderately
+aggressive plan: a 30-year horizon from age 65 to 95 with default
+market assumptions (stocks: 7\% return, 15\% volatility; bonds: 3\%
+return, 5\% volatility).  The sub-50\% success rate indicates the
+default spending level is slightly above the safe withdrawal rate for
+this asset allocation.
+
+The regime-switching scenario (32.82\%) shows substantially lower success
+due to the inclusion of a ``bear'' regime with negative expected returns
+and elevated volatility.  This demonstrates the framework's ability to
+model adverse market environments that are not captured by MVN.
+
+The antithetic result (49.90\%) is close to the non-antithetic MVN result,
+as expected---antithetic variates reduce variance of the estimator but do
+not change its expected value.
+
+% ------------------------------------------------------------
+\subsection{Convergence Analysis}\label{sec:convergence}
+
+\subsubsection{Path Count vs.\ Precision}
+
+The Monte Carlo standard error (\cref{eq:mc_se}) provides a theoretical
+bound on the precision of $\hat{p}$.  \Cref{tab:presets} shows the
+standard error at $\hat{p} = 0.50$ for each preset.
+
+\begin{table}[H]
+\centering
+\caption{Simulation presets and standard errors.}
+\label{tab:presets}
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+Preset & Paths & Antithetic & SE at $p=0.50$ & 95\% CI width \\
+\midrule
+Fast & 1{,}000 & No & 1.58\% & $\pm 3.10\%$ \\
+Balanced & 5{,}000 & No & 0.71\% & $\pm 1.39\%$ \\
+Deep & 20{,}000 & Yes & $\leq 0.25\%$* & $\leq\pm 0.50\%$ \\
+\bottomrule
+\end{tabular}
+
+\smallskip
+\footnotesize
+*Effective SE is lower due to negative covariance from antithetic
+pairing.  95\% CI = $\hat{p} \pm 1.96 \cdot \text{SE}$.
+\end{table}
+
+The ``balanced'' preset (5{,}000 paths) provides sub-1\% standard error,
+which is sufficient for most planning decisions.  The ``deep'' preset
+(20{,}000 paths with antithetic) achieves precision suitable for
+research-grade analysis.
+
+\subsubsection{Convergence Rate}
+
+The standard Monte Carlo convergence rate is $O(1/\sqrt{M})$.  To halve
+the standard error, one must quadruple the number of paths.  This
+fundamental relationship motivates the three presets:
+
+\begin{equation}
+  \text{SE}(M) = \frac{c}{\sqrt{M}},
+  \quad c = \sqrt{p(1-p)} \leq 0.5.
+\end{equation}
+
+For $p = 0.50$ (worst case):
+$\text{SE}(1000) = 1.58\%$,
+$\text{SE}(5000) = 0.71\%$,
+$\text{SE}(20000) = 0.35\%$ (before antithetic improvement).
+
+\subsubsection{Antithetic Variance Reduction Factor}
+
+For the basic retirement scenario, the empirical variance reduction
+factor of antithetic variates is approximately 1.8--2.1$\times$,
+consistent with the theoretical prediction for monotone portfolio value
+functions (\cref{prop:antithetic}).
+
+The variance reduction factor $\rho$ is defined as:
+\begin{equation}
+  \rho = \frac{\Var(\hat{p}_{\text{standard}})}
+  {\Var(\hat{p}_{\text{antithetic}})},
+\end{equation}
+where both estimators use the same total number of simulation paths.
+A factor of 2.0 means the antithetic estimator with $M$ paths achieves
+the same precision as a standard estimator with $2M$ paths.
+
+\begin{remark}
+  The variance reduction is most effective when the portfolio value
+  function is approximately monotone in the return draws.  For highly
+  non-linear strategies (e.g., guardrails with extreme thresholds), the
+  reduction factor may be closer to 1.5$\times$.
+\end{remark}
+
+% ------------------------------------------------------------
+\subsection{Tax Model Verification}\label{sec:tax_verify}
+
+The US federal tax model is verified against manual bracket computations
+derived from IRS Revenue Procedure 2023-34 \cite{irsrevproc2023}:
+
+\begin{itemize}
+  \item For single filer with \$100{,}000 ordinary income (2024):
+    taxable = \$100{,}000 $-$ \$14{,}600 = \$85{,}400.
+    Tax = $0.10 \times 11{,}600 + 0.12 \times (47{,}150 - 11{,}600) +
+    0.22 \times (85{,}400 - 47{,}150) = \$13{,}483$.
+  \item NIIT for single filer with \$150{,}000 ordinary + \$100{,}000 LTCG:
+    MAGI = \$250{,}000; excess = \$50{,}000; base = $\min(100{,}000, 50{,}000)
+    = \$50{,}000$; NIIT = $0.038 \times 50{,}000 = \$1{,}900$.
+  \item Bracket ceiling at 22\% marginal rate (single):
+    ceiling = \$100{,}525 + \$14{,}600 = \$115{,}125.
+\end{itemize}
+
+These computations are encoded as parameterized test cases in the test
+suite.
+
+Additional tax verification includes:
+
+\begin{itemize}
+  \item \textbf{Zero-income test}: Tax on \$0 income returns \$0 for
+    both flat and progressive models;
+  \item \textbf{Deduction-only test}: Income below the standard
+    deduction produces zero ordinary tax;
+  \item \textbf{Top-bracket test}: Income of \$1{,}000{,}000 exercises
+    all seven brackets;
+  \item \textbf{LTCG 0\% bracket}: LTCG below \$47{,}025 (single)
+    pays zero capital gains tax;
+  \item \textbf{NIIT threshold boundary}: Income at exactly
+    \$200{,}000 (single) produces zero NIIT; income at \$200{,}001
+    triggers the surtax;
+  \item \textbf{Vectorization equivalence}: The vectorized
+    implementation produces bit-identical results to the scalar
+    implementation for all test inputs.
+\end{itemize}
+
+% ------------------------------------------------------------
+\subsection{RMD Verification}\label{sec:rmd_verify}
+
+The RMD model is verified against the IRS Uniform Lifetime Table
+\cite{irs590b}:
+
+\begin{itemize}
+  \item Age 73 with \$1{,}000{,}000 prior-year balance:
+    RMD = $1{,}000{,}000 / 26.5 = \$37{,}735.85$;
+  \item Age 80 with \$500{,}000:
+    RMD = $500{,}000 / 20.2 = \$24{,}752.48$;
+  \item Age 72 (below start age): RMD = \$0;
+  \item Age 120 (maximum table age): divisor = 2.0.
+\end{itemize}
+
+The engine enforces RMD satisfaction: if spending withdrawals from
+traditional accounts during the year are insufficient to meet the RMD,
+forced withdrawals are executed at the December step.
+
+% ------------------------------------------------------------
+\subsection{Spending Policy Invariants}\label{sec:spending_verify}
+
+Each spending policy is tested for the following invariants:
+
+\begin{enumerate}
+  \item \textbf{Non-negativity}: $s_t \geq 0$ for all paths and steps;
+  \item \textbf{Zero on depletion}: $s_t = 0$ when $W_t \leq 0$;
+  \item \textbf{Shape correctness}: output shape is $(M,)$ matching
+    the number of paths;
+  \item \textbf{Policy-specific bounds}:
+    \begin{itemize}
+      \item Floor-ceiling: $F \cdot \Pi_t \leq s_t \leq C \cdot \Pi_t$
+        (when $W_t > 0$);
+      \item VPW: $r_{\min}/12 \cdot W_t \leq s_t \leq r_{\max}/12 \cdot W_t$;
+      \item Constant real: $s_t = s_0 \cdot \Pi_t$ exactly.
+    \end{itemize}
+\end{enumerate}
+
+% ------------------------------------------------------------
+\subsection{Test Coverage}\label{sec:coverage}
+
+The test suite comprises 263 tests organized across the following
+categories.  Tests are executed via \texttt{pytest} with coverage
+reporting via \texttt{pytest-cov}.
+
+\begin{table}[H]
+\centering
+\caption{Test suite composition (v0.5.0, 263 tests).}
+\label{tab:tests}
+\begin{tabular}{@{}lrl@{}}
+\toprule
+Category & Count & Key Coverage \\
+\midrule
+Engine (core simulation) & $\sim$50 & Pipeline steps, depletion \\
+Return models & $\sim$40 & MVN, $t$, regime, bootstrap \\
+Tax models & $\sim$30 & Brackets, NIIT, RMD \\
+Spending policies & $\sim$25 & All 5 policies, invariants \\
+Config validation & $\sim$30 & Cross-field, bounds \\
+Analytics & $\sim$25 & Sensitivity, SWR, metrics \\
+Serialization \& I/O & $\sim$15 & JSON, CSV export \\
+Integration \& golden & $\sim$20 & End-to-end, reproducibility \\
+Roth conversions & $\sim$15 & Fixed, fill-bracket \\
+Other & $\sim$13 & Timeline, state, defaults \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Testing Methodology.}
+The test suite employs several complementary strategies:
+
+\begin{itemize}
+  \item \textbf{Golden snapshot tests}: Exact numerical values for fixed
+    seeds, catching any unintentional engine changes;
+  \item \textbf{Table-driven parametric tests}: Tax bracket computations
+    against IRS-published values across multiple income levels;
+  \item \textbf{Invariant tests}: Mathematical properties that must hold
+    regardless of input (non-negative wealth, weight normalization,
+    monotonicity);
+  \item \textbf{Boundary tests}: Edge cases such as zero income, maximum
+    age, single-path simulation, and single-asset portfolios;
+  \item \textbf{Integration tests}: End-to-end simulations with all
+    features enabled (regime switching + antithetic + Roth + guardrails);
+  \item \textbf{Benchmark tests}: Performance regression via
+    \texttt{pytest-benchmark} on the critical simulation loop.
+\end{itemize}
+
+
+% ============================================================
+\section{Related Work}\label{sec:related}
+
+% ------------------------------------------------------------
+\subsection{Open-Source Tools}
+
+Several open-source retirement calculators exist, each with distinct
+limitations relative to \textsc{monteplan}:
+
+\paragraph{FICalc and cFIREsim.}
+Web-based calculators using historical backtesting (the ``Trinity
+Study'' approach).  These replay actual market sequences rather than
+generating synthetic paths, limiting scenario analysis to the historical
+record.  Neither supports multi-account tax modeling or parametric return
+distributions.
+
+\paragraph{FireCalc.}
+A longstanding historical-only calculator with spending rule variants
+(constant, percent-of-portfolio, Bernicke) but no multi-account
+treatment and no tax modeling.
+
+\subsection{Commercial Tools}
+
+\paragraph{eMoney Advisor and MoneyGuidePro.}
+Professional financial planning platforms with sophisticated tax-aware
+modeling.  However, they are closed-source, expensive (\$3{,}000--5{,}000+
+per year), and not auditable.  Their Monte Carlo implementations are
+not publicly documented.
+
+\paragraph{Boldin (formerly NewRetirement).}
+Consumer-facing tool with some Monte Carlo capability and tax awareness.
+Closed-source with limited parametric flexibility.
+
+% ------------------------------------------------------------
+\subsection{Feature Comparison}
+
+\Cref{tab:comparison} provides a systematic comparison of
+\textsc{monteplan} against the most widely used open-source and
+commercial tools.
+
+\begin{table}[H]
+\centering
+\caption{Feature comparison with existing tools.}
+\label{tab:comparison}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Feature & \textsc{monteplan}
+  & FICalc & cFIREsim & Commercial \\
+\midrule
+Monte Carlo simulation & \checkmark & -- & -- & \checkmark \\
+Historical backtesting & \checkmark & \checkmark & \checkmark & \checkmark \\
+Parametric returns (MVN) & \checkmark & -- & -- & ? \\
+Fat-tailed returns ($t$) & \checkmark & -- & -- & -- \\
+Regime switching & \checkmark & -- & -- & -- \\
+Multi-account (tax-aware) & \checkmark & -- & -- & \checkmark \\
+Progressive tax brackets & \checkmark & -- & -- & \checkmark \\
+LTCG preferential rates & \checkmark & -- & -- & \checkmark \\
+NIIT surtax & \checkmark & -- & -- & ? \\
+State income tax & \checkmark & -- & -- & \checkmark \\
+RMD enforcement & \checkmark & -- & -- & \checkmark \\
+Roth conversions & \checkmark & -- & -- & \checkmark \\
+Dynamic spending (5+) & \checkmark & P & P & \checkmark \\
+Antithetic variates & \checkmark & -- & -- & -- \\
+Sensitivity analysis & \checkmark & -- & -- & ? \\
+SWR finder & \checkmark & -- & -- & ? \\
+Open source & \checkmark & \checkmark & \checkmark & -- \\
+API / library access & \checkmark & -- & -- & -- \\
+Reproducible (seeded) & \checkmark & -- & -- & ? \\
+\bottomrule
+\end{tabular}
+
+\smallskip
+\footnotesize
+\checkmark~= supported, --~= not supported, P~= partial,
+?~= unknown (closed source).
+\end{table}
+
+% ------------------------------------------------------------
+\subsection{Academic Literature}
+
+The foundational work on safe withdrawal rates by Bengen \cite{bengen1994}
+established the ``4\% rule'' using historical backtesting over rolling
+30-year periods.  The Trinity Study \cite{cooley1998} extended this
+analysis across stock/bond allocations.
+
+Guyton and Klinger \cite{guyton2006} introduced dynamic decision rules
+(guardrails) that adjust spending based on portfolio performance, finding
+that dynamic policies support higher initial withdrawal rates.  Blanchett,
+Kowara, and Chen \cite{blanchett2012} developed optimal withdrawal
+strategies considering asset allocation and mortality.  Blanchett, Finke,
+and Pfau \cite{blanchett2013} examined the impact of low-yield environments
+on safe withdrawal rates.
+
+Hamilton \cite{hamilton1989} introduced the Markov regime-switching model
+for economic time series.  Ang and Bekaert \cite{ang2002} and Guidolin
+and Timmermann \cite{guidolin2007} applied regime-switching to
+portfolio allocation.
+
+Glasserman \cite{glasserman2003} provides the standard reference for
+Monte Carlo methods in financial engineering, including variance reduction
+techniques such as antithetic variates \cite{hammersley1956}.  The
+block bootstrap methodology follows Politis and Romano \cite{politis1994}.
+
+The Ornstein--Uhlenbeck process for inflation modeling draws on the
+term structure literature originating with Vasicek \cite{vasicek1977}.
+
+% ============================================================
+\section{Conclusion}\label{sec:conclusion}
+
+We have presented \textsc{monteplan}, an open-source Python framework
+(v0.5.0) for Monte Carlo simulation of multi-account retirement plans
+under realistic tax treatment.  The framework addresses a critical gap
+in the landscape of financial planning tools: the absence of an
+open-source, auditable system that combines parametric return modeling,
+progressive tax brackets, multi-account treatment, and dynamic spending
+policies in a single coherent engine.
+
+\subsection{Summary of Contributions}
+
+The framework's key technical contributions are:
+
+\begin{enumerate}
+  \item \textbf{Vectorized multi-account engine}: A three-dimensional
+    tensor representation $(M \times A \times n)$ with a 12-step monthly
+    pipeline that eliminates per-path Python loops, achieving throughput
+    suitable for interactive web-based exploration;
+
+  \item \textbf{Four return models}: Multivariate normal, Student-$t$
+    (fat tails), Markov regime-switching (structural breaks), and
+    historical block bootstrap (non-parametric), all sharing a common
+    protocol for seamless substitution;
+
+  \item \textbf{Tax-aware decumulation}: US federal progressive brackets
+    with preferential LTCG rates, the 3.8\% NIIT surtax, configurable
+    state tax overlays, RMD enforcement, and two Roth conversion
+    strategies (fixed-amount and fill-bracket);
+
+  \item \textbf{Five dynamic spending policies}: From the simple
+    (constant real) to the sophisticated (Guyton--Klinger guardrails),
+    enabling exploration of the trade-off between spending stability
+    and portfolio survival;
+
+  \item \textbf{Variance reduction}: Antithetic variates providing
+    approximately 2$\times$ variance reduction, with formal proof of
+    effectiveness for monotone portfolio value functions;
+
+  \item \textbf{Analytics framework}: One-at-a-time sensitivity analysis
+    with parallel execution, two-dimensional grid search for interaction
+    effects, bisection-based safe withdrawal rate finder, and
+    distributional metrics (max drawdown, spending volatility,
+    ruin-by-age curves).
+\end{enumerate}
+
+\subsection{Design Principles}
+
+The framework's design adheres to four core principles:
+
+\begin{enumerate}
+  \item \textbf{Vectorization over explicitness}: All operations across
+    Monte Carlo paths use NumPy broadcasting rather than Python loops.
+    This enables simulation of 20{,}000 paths over 40 years (480 monthly
+    steps) in seconds on commodity hardware;
+
+  \item \textbf{Protocol-based extensibility}: Return models, spending
+    policies, and tax models implement Python protocols (structural
+    typing), enabling new implementations without modifying the engine;
+
+  \item \textbf{Reproducibility by construction}: Deterministic RNG
+    (PCG64DXSM) with user-specified seeds, combined with SHA-256 config
+    hashing, ensures every simulation result is exactly replicable and
+    traceable to its inputs;
+
+  \item \textbf{Validation at every level}: Golden tests guard against
+    regression, table-driven tests verify tax computations against IRS
+    publications, and invariant tests ensure mathematical properties
+    hold across all inputs.
+\end{enumerate}
+
+\subsection{Limitations}
+
+The current version (v0.5.0) has several limitations:
+
+\begin{itemize}
+  \item \textbf{Estate planning}: No bequest optimization or estate tax
+    modeling;
+  \item \textbf{Social Security optimization}: Benefits are modeled as
+    exogenous guaranteed income; the claiming age decision is not
+    optimized;
+  \item \textbf{Dynamic asset allocation}: Only static and linear glide
+    path allocations are supported; no market-condition-responsive
+    strategies;
+  \item \textbf{Healthcare costs}: No age-dependent healthcare expenditure
+    modeling (e.g., Medicare Part~B, long-term care);
+  \item \textbf{Mortality risk}: The simulation runs to a fixed end age
+    rather than incorporating actuarial life tables;
+  \item \textbf{Tax code evolution}: Tax brackets are static (2024
+    values); no modeling of legislative changes or TCJA sunset;
+  \item \textbf{International taxes}: Only US federal and state taxes
+    are implemented; no support for other jurisdictions.
+\end{itemize}
+
+\subsection{Future Work}
+
+Planned extensions include:
+
+\begin{enumerate}
+  \item \textbf{Mortality-weighted metrics}: Integrating actuarial life
+    tables (SOA 2012 IAM) to compute mortality-weighted success
+    probabilities and expected bequest values;
+  \item \textbf{Social Security optimization}: Brute-force or dynamic
+    programming search over claiming ages (62--70) for individual
+    and spousal benefits;
+  \item \textbf{Multi-objective optimization}: Jointly optimizing
+    spending level, asset allocation, and Roth conversion strategy
+    using Pareto-front methods;
+  \item \textbf{Tax-loss harvesting}: Modeling the tax benefit of
+    realizing losses in taxable accounts to offset gains;
+  \item \textbf{Healthcare cost modeling}: Age-dependent healthcare
+    expenditure curves calibrated to CMS data.
+\end{enumerate}
+
+
+% ============================================================
+% APPENDICES
+% ============================================================
+\appendix
+
+% ------------------------------------------------------------
+\section{US Federal Tax Brackets (2024)}\label{app:brackets}
+
+\begin{table}[H]
+\centering
+\caption{2024 ordinary income brackets (single filer).}
+\label{tab:brackets}
+\begin{tabular}{@{}rr@{}}
+\toprule
+Taxable Income Up To & Marginal Rate \\
+\midrule
+\$11,600 & 10\% \\
+\$47,150 & 12\% \\
+\$100,525 & 22\% \\
+\$191,950 & 24\% \\
+\$243,725 & 32\% \\
+\$609,350 & 35\% \\
+Above & 37\% \\
+\bottomrule
+\end{tabular}
+\hfill
+\begin{tabular}{@{}rr@{}}
+\toprule
+Taxable Income Up To & Marginal Rate \\
+\midrule
+\$23,200 & 10\% \\
+\$94,300 & 12\% \\
+\$201,050 & 22\% \\
+\$383,900 & 24\% \\
+\$487,450 & 32\% \\
+\$731,200 & 35\% \\
+Above & 37\% \\
+\bottomrule
+\end{tabular}
+
+\smallskip
+\footnotesize
+Left: Single.  Right: Married Filing Jointly.\\
+Standard deduction: \$14,600 (single), \$29,200 (MFJ).\\
+Source: IRS Rev.\ Proc.\ 2023-34 \cite{irsrevproc2023}.
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{2024 long-term capital gains brackets.}
+\label{tab:ltcg}
+\begin{tabular}{@{}rrr@{}}
+\toprule
+Filing Status & Threshold & Rate \\
+\midrule
+\multirow{3}{*}{Single} & Up to \$47,025 & 0\% \\
+ & \$47,025--\$518,900 & 15\% \\
+ & Above \$518,900 & 20\% \\
+\midrule
+\multirow{3}{*}{MFJ} & Up to \$94,050 & 0\% \\
+ & \$94,050--\$583,750 & 15\% \\
+ & Above \$583,750 & 20\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ------------------------------------------------------------
+\section{IRS Uniform Lifetime Table (RMD Divisors)}\label{app:rmd}
+
+\begin{table}[H]
+\centering
+\caption{IRS Uniform Lifetime Table divisors (selected ages).
+Full table covers ages 73--120.}
+\label{tab:rmd}
+\begin{tabular}{@{}cccccc@{}}
+\toprule
+Age & Divisor & Age & Divisor & Age & Divisor \\
+\midrule
+73 & 26.5 & 83 & 17.7 & 93 & 10.1 \\
+74 & 25.5 & 84 & 16.8 & 94 & 9.5 \\
+75 & 24.6 & 85 & 16.0 & 95 & 8.9 \\
+76 & 23.7 & 86 & 15.2 & 96 & 8.4 \\
+77 & 22.9 & 87 & 14.4 & 97 & 7.8 \\
+78 & 22.0 & 88 & 13.7 & 98 & 7.3 \\
+79 & 21.1 & 89 & 12.9 & 99 & 6.8 \\
+80 & 20.2 & 90 & 12.2 & 100 & 6.4 \\
+81 & 19.4 & 91 & 11.5 & 105 & 4.6 \\
+82 & 18.5 & 92 & 10.8 & 110 & 3.5 \\
+\bottomrule
+\end{tabular}
+
+\smallskip
+\footnotesize
+Source: IRS Publication 590-B, Table III \cite{irs590b}.
+\end{table}
+
+% ------------------------------------------------------------
+\section{Complete Parameter Reference}\label{app:params}
+
+\footnotesize
+\begin{longtable}{@{}p{3.5cm}p{1.8cm}p{1.8cm}p{5.8cm}@{}}
+\caption{Configuration parameter reference.}
+\label{tab:params} \\
+\toprule
+Parameter & Type & Default & Description \\
+\midrule
+\endfirsthead
+\toprule
+Parameter & Type & Default & Description \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+
+\multicolumn{4}{@{}l}{\textit{PlanConfig}} \\
+\midrule
+current\_age & int & --- & Current age (18--100) \\
+retirement\_age & int & --- & Retirement age ($>$ current) \\
+end\_age & int & --- & Planning horizon (18--120) \\
+monthly\_spending & float & --- & Monthly goal (today's \$) \\
+monthly\_income & float & 0 & Earned income \\
+income\_growth\_rate & float & 0.0 & Real income growth rate \\
+income\_end\_age & int$|$None & retire & Age income stops \\
+accounts & list & --- & Account configs \\
+discrete\_events & list & [] & One-time cash events \\
+guaranteed\_income & list & [] & GI streams \\
+
+\midrule
+\multicolumn{4}{@{}l}{\textit{MarketAssumptions}} \\
+\midrule
+expected\_returns & list[float] & --- & Per-asset annual returns \\
+annual\_volatilities & list[float] & --- & Per-asset volatility \\
+correlation\_matrix & list[list] & --- & $n \times n$ correlation \\
+inflation\_mean & float & 0.03 & Long-run inflation \\
+inflation\_vol & float & 0.01 & Inflation volatility \\
+return\_model & str & mvn & mvn, student\_t, bootstrap, regime\_switching \\
+degrees\_of\_freedom & float$|$None & None & Student-$t$ d.o.f.\ ($>2$) \\
+bootstrap\_block\_size & int & 12 & Block size (months) \\
+expense\_ratio & float & 0.0 & Annual fund fees \\
+aum\_fee & float & 0.0 & AUM fee \\
+advisory\_fee & float & 0.0 & Advisor fee \\
+
+\midrule
+\multicolumn{4}{@{}l}{\textit{PolicyBundle}} \\
+\midrule
+spending.policy\_type & str & const\_real & Spending policy \\
+rebalancing\_strategy & str & calendar & calendar$|$threshold \\
+rebalancing\_months & list[int] & [1,7] & Calendar months \\
+rebalancing\_threshold & float & 0.05 & Drift threshold \\
+withdrawal\_order & list[str] & [tax,trad, roth] & Account priority \\
+tax\_model & str & flat & flat$|$us\_federal \\
+tax\_rate & float & 0.22 & Flat effective rate \\
+filing\_status & str & single & single$|$married\_jointly \\
+state\_tax\_rate & float & 0.0 & State flat rate (0--15\%) \\
+include\_niit & bool & False & NIIT 3.8\% surtax \\
+
+\midrule
+\multicolumn{4}{@{}l}{\textit{RothConversionConfig}} \\
+\midrule
+enabled & bool & False & Enable conversions \\
+strategy & str & fixed\_amt & fixed\_amount, fill\_bracket \\
+annual\_amount & float & 0 & Fixed conversion \$ \\
+fill\_to\_bracket & float & 0.22 & Target marginal rate \\
+start\_age & float & 55 & Conversion start age \\
+end\_age & float & 72 & Conversion end age \\
+
+\midrule
+\multicolumn{4}{@{}l}{\textit{SimulationConfig}} \\
+\midrule
+n\_paths & int & 5000 & Monte Carlo paths \\
+seed & int & 42 & Random seed \\
+antithetic & bool & False & Antithetic variates \\
+preset & str$|$None & None & fast$|$balanced$|$deep \\
+store\_paths & bool & False & Store full paths \\
+
+\end{longtable}
+
+
+% ------------------------------------------------------------
+\section{Streamlit Application}\label{app:streamlit}
+
+The web application \cite{streamlit2024} provides six pages for
+interactive exploration:
+
+\begin{enumerate}
+  \item \textbf{Plan Setup}: Demographics, accounts, income, spending,
+    guaranteed income streams, discrete events.  Quick-start templates
+    (Default, FIRE, Coast FIRE, Conservative Retiree).
+  \item \textbf{Portfolio}: Asset allocation, correlation matrix, return
+    model selection (MVN, Student-$t$, regime-switching, bootstrap), fees,
+    glide path.
+  \item \textbf{Run \& Results}: Simulation execution with fan chart,
+    spending fan chart, ruin-by-age curve.  SWR finder expander.  CSV
+    export.
+  \item \textbf{Policies}: Spending policy configuration, rebalancing,
+    withdrawal order, tax model, state tax, NIIT, Roth conversions.
+  \item \textbf{Compare Scenarios}: Save/load scenarios, overlay fan
+    charts, dominance scatter plot.
+  \item \textbf{Sensitivity}: OAT tornado chart, 2D heatmap grid.
+\end{enumerate}
+
+All simulation results are cached via \texttt{st.cache\_data} keyed by
+the configuration SHA-256 hash.
+
+
+% ============================================================
+% BIBLIOGRAPHY
+% ============================================================
+\bibliographystyle{plainnat}
+\bibliography{monteplan}
+
+\end{document}
