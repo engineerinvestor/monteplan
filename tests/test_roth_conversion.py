@@ -96,7 +96,7 @@ class TestRothConversionEngine:
             default_policies(),
             SimulationConfig(n_paths=5000, seed=42),
         )
-        assert result.success_probability == pytest.approx(0.4794, abs=0.03)
+        assert result.success_probability == pytest.approx(0.7582, abs=0.03)
 
     def test_fixed_amount_conversion(self) -> None:
         """Fixed $50K/year conversion runs and produces valid results."""

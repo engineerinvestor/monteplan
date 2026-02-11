@@ -9,7 +9,7 @@ class TestExports:
     """All public exports should be importable from the top-level package."""
 
     def test_version(self) -> None:
-        assert monteplan.__version__ == "0.5.0"
+        assert monteplan.__version__ == "0.6.0"
 
     def test_simulate(self) -> None:
         assert callable(monteplan.simulate)

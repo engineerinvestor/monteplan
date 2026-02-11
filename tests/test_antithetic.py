@@ -21,9 +21,10 @@ from monteplan.models.returns.mvn import MultivariateNormalReturns, StudentTRetu
 class TestAntitheticMVN:
     def test_output_shape(self) -> None:
         market = default_market()
+        n_assets = len(market.assets)
         model = MultivariateNormalReturns(market, antithetic=True)
         result = model.sample(100, 60, make_rng(42))
-        assert result.shape == (100, 60, 2)
+        assert result.shape == (100, 60, n_assets)
 
     def test_determinism(self) -> None:
         market = default_market()
@@ -61,9 +62,10 @@ class TestAntitheticStudentT:
                 "degrees_of_freedom": 5.0,
             }
         )
+        n_assets = len(market.assets)
         model = StudentTReturns(market, antithetic=True)
         result = model.sample(100, 60, make_rng(42))
-        assert result.shape == (100, 60, 2)
+        assert result.shape == (100, 60, n_assets)
 
     def test_determinism(self) -> None:
         market = default_market().model_copy(

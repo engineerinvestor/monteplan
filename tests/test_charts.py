@@ -229,7 +229,7 @@ class TestSensitivityHeatmap:
     def test_returns_figure(self) -> None:
         data = {
             "x_param_name": "Monthly Spending",
-            "y_param_name": "Stock Allocation",
+            "y_param_name": "Equity Allocation",
             "x_values": [3000, 4000, 5000],
             "y_values": [0.4, 0.6, 0.8],
             "success_grid": [

@@ -85,7 +85,7 @@ class TestSensitivity2D:
             default_policies(),
             SimulationConfig(n_paths=100, seed=42),
             x_param="Monthly Spending",
-            y_param="Stock Allocation",
+            y_param="Equity Allocation",
             x_range=(3000, 5000),
             y_range=(0.4, 0.9),
             x_steps=3,

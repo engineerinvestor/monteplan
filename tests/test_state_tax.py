@@ -24,7 +24,7 @@ class TestStateTaxDefault:
             PolicyBundle(state_tax_rate=0.0),
             SimulationConfig(n_paths=5000, seed=42),
         )
-        assert result.success_probability == pytest.approx(0.4794, abs=0.03)
+        assert result.success_probability == pytest.approx(0.7582, abs=0.03)
 
     def test_config_round_trip(self) -> None:
         policies = PolicyBundle(state_tax_rate=0.05)

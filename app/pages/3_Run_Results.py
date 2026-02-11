@@ -151,13 +151,26 @@ with st.expander("Current Configuration"):
             st.write(f"Discrete Events: {len(plan.discrete_events)}")
     with col2:
         st.markdown("**Portfolio & Market**")
-        st.write(f"Allocation: {market.assets[0].weight:.0%} / {market.assets[1].weight:.0%}")
+        stock_total = sum(a.weight for a in market.assets if "Stock" in a.name)
+        bond_total = sum(a.weight for a in market.assets if "Bond" in a.name)
+        n_ast = len(market.assets)
+        st.write(
+            f"Allocation: {stock_total:.0%} stocks"
+            f" / {bond_total:.0%} bonds ({n_ast} assets)"
+        )
         st.write(f"Return Model: {market.return_model}")
         if market.glide_path:
-            st.write(
-                f"Glide Path: {market.glide_path.start_weights[0]:.0%} → "
-                f"{market.glide_path.end_weights[0]:.0%} stocks"
+            gp_start_stock = sum(
+                market.glide_path.start_weights[i]
+                for i in range(len(market.glide_path.start_weights))
+                if i < len(market.assets) and "Stock" in market.assets[i].name
             )
+            gp_end_stock = sum(
+                market.glide_path.end_weights[i]
+                for i in range(len(market.glide_path.end_weights))
+                if i < len(market.assets) and "Stock" in market.assets[i].name
+            )
+            st.write(f"Glide Path: {gp_start_stock:.0%} → {gp_end_stock:.0%} stocks")
         if sim_config.stress_scenarios:
             st.write(f"Stress Scenarios: {len(sim_config.stress_scenarios)}")
     with col3:
@@ -311,14 +324,17 @@ if "result_data" in st.session_state:
 
         swr_col1, swr_col2 = st.columns(2)
         with swr_col1:
-            swr_target = st.slider(
-                "Target Success Rate (%)",
-                min_value=50,
-                max_value=99,
-                value=95,
-                step=1,
-                key="swr_target",
-            ) / 100
+            swr_target = (
+                st.slider(
+                    "Target Success Rate (%)",
+                    min_value=50,
+                    max_value=99,
+                    value=95,
+                    step=1,
+                    key="swr_target",
+                )
+                / 100
+            )
         with swr_col2:
             swr_paths = st.number_input(
                 "Simulation Paths",
@@ -336,7 +352,10 @@ if "result_data" in st.session_state:
             )
             with st.spinner("Searching for safe withdrawal rate..."):
                 swr_result = find_safe_withdrawal_rate(
-                    plan, market, policies, swr_sim,
+                    plan,
+                    market,
+                    policies,
+                    swr_sim,
                     target_success_rate=swr_target,
                 )
             swr_c1, swr_c2, swr_c3 = st.columns(3)

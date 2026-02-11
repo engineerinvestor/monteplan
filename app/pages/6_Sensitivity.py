@@ -144,8 +144,8 @@ with col1:
     )
 with col2:
     default_y_idx = (
-        available_2d_params.index("Stock Allocation")
-        if "Stock Allocation" in available_2d_params
+        available_2d_params.index("Equity Allocation")
+        if "Equity Allocation" in available_2d_params
         else min(1, len(available_2d_params) - 1)
     )
     y_param = st.selectbox(

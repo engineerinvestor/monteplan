@@ -79,7 +79,7 @@ class TestNIITIntegration:
             PolicyBundle(include_niit=False),
             SimulationConfig(n_paths=5000, seed=42),
         )
-        assert result.success_probability == pytest.approx(0.4794, abs=0.03)
+        assert result.success_probability == pytest.approx(0.7582, abs=0.03)
 
     def test_niit_lowers_success(self) -> None:
         """Enabling NIIT with us_federal should lower success."""

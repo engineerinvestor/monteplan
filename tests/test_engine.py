@@ -216,7 +216,7 @@ class TestGolden:
             default_policies(),
             SimulationConfig(n_paths=5000, seed=42, antithetic=True),
         )
-        assert result.success_probability == pytest.approx(0.4986, abs=0.03)
+        assert result.success_probability == pytest.approx(0.7658, abs=0.03)
         assert result.n_paths == 5000
 
 

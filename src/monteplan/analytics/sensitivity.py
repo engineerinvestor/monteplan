@@ -99,13 +99,38 @@ def _make_contribution_setter(idx: int) -> _Setter:
     return setter
 
 
-def _stock_allocation_setter(m: MarketAssumptions, val: float) -> MarketAssumptions:
-    """Set stock allocation weight (first asset), adjusting second asset to keep sum=1."""
+def _equity_allocation_setter(m: MarketAssumptions, val: float) -> MarketAssumptions:
+    """Set total equity allocation, scaling stock and bond groups proportionally.
+
+    Identifies stock vs bond assets by name substring ("Stock" / "Bond").
+    Preserves regional ratios within each group. For 2-asset portfolios,
+    behaves identically to the old _stock_allocation_setter.
+    """
     clamped = max(0.0, min(1.0, val))
+    bond_total = 1.0 - clamped
+
+    stock_indices = [i for i, a in enumerate(m.assets) if "Stock" in a.name]
+    bond_indices = [i for i, a in enumerate(m.assets) if "Bond" in a.name]
+
+    # Current totals for proportional scaling
+    current_stock_total = sum(m.assets[i].weight for i in stock_indices)
+    current_bond_total = sum(m.assets[i].weight for i in bond_indices)
+
     new_assets = list(m.assets)
-    new_assets[0] = AssetClass(name=new_assets[0].name, weight=clamped)
-    if len(new_assets) > 1:
-        new_assets[1] = AssetClass(name=new_assets[1].name, weight=1.0 - clamped)
+    for i in stock_indices:
+        if current_stock_total > 0:
+            ratio = m.assets[i].weight / current_stock_total
+        else:
+            ratio = 1.0 / len(stock_indices) if stock_indices else 0.0
+        new_assets[i] = AssetClass(name=new_assets[i].name, weight=clamped * ratio)
+
+    for i in bond_indices:
+        if current_bond_total > 0:
+            ratio = m.assets[i].weight / current_bond_total
+        else:
+            ratio = 1.0 / len(bond_indices) if bond_indices else 0.0
+        new_assets[i] = AssetClass(name=new_assets[i].name, weight=bond_total * ratio)
+
     return m.model_copy(update={"assets": new_assets})
 
 
@@ -161,11 +186,11 @@ def _build_param_registry(
                 target="plan",
             )
 
-    # Stock allocation (first asset weight)
+    # Equity allocation (total stock weight)
     if n_assets >= 2:
-        all_params["Stock Allocation"] = _ParamSpec(
-            getter=lambda m: m.assets[0].weight,
-            setter=_stock_allocation_setter,
+        all_params["Equity Allocation"] = _ParamSpec(
+            getter=lambda m: sum(a.weight for a in m.assets if "Stock" in a.name),
+            setter=_equity_allocation_setter,
             is_additive=False,
         )
 
