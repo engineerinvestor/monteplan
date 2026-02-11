@@ -6,11 +6,11 @@
 
 Ordinary income (traditional account withdrawals, earned income) is taxed through progressive brackets after applying the standard deduction:
 
-$$\text{taxable\_income} = \text{gross\_income} - \text{standard\_deduction}$$
+$$\text{taxable income} = \text{gross income} - \text{standard deduction}$$
 
 Tax is computed by applying marginal rates to each bracket:
 
-$$\text{tax} = \sum_{k=1}^{K} r_k \cdot \min(\max(\text{taxable\_income} - b_{k-1}, 0),\, b_k - b_{k-1})$$
+$$\text{tax} = \sum_{k=1}^{K} r_k \cdot \min(\max(\text{taxable income} - b_{k-1}, 0),\, b_k - b_{k-1})$$
 
 where $r_k$ is the marginal rate for bracket $k$ and $[b_{k-1}, b_k)$ is the bracket range.
 
@@ -54,7 +54,7 @@ compute_annual_tax_vectorized(
 
 Traditional account holders must take minimum distributions starting at age 73 (per current IRS rules). The RMD is calculated as:
 
-$$\text{RMD} = \frac{\text{prior\_year\_balance}}{\text{divisor}(\text{age})}$$
+$$\text{RMD} = \frac{\text{prior year balance}}{\text{divisor}(\text{age})}$$
 
 ### IRS Uniform Lifetime Table (Selected Values)
 
@@ -74,7 +74,7 @@ The divisor table is loaded from `taxes/tables/rmd_divisors.yaml`.
 
 The flat tax model applies a single effective rate to all taxable income:
 
-$$\text{tax} = \text{rate} \times \text{gross\_income}$$
+$$\text{tax} = \text{rate} \times \text{gross income}$$
 
 This is simpler but less realistic. It's useful for:
 
@@ -94,6 +94,6 @@ This is simpler but less realistic. It's useful for:
 
 When withdrawing from a traditional account to meet spending needs, the engine applies a tax gross-up:
 
-$$\text{gross\_withdrawal} = \frac{\text{needed\_spending}}{1 - \text{effective\_rate}}$$
+$$\text{gross withdrawal} = \frac{\text{needed spending}}{1 - \text{effective rate}}$$
 
 This ensures the after-tax amount meets the spending target.
