@@ -54,6 +54,20 @@ class SimulationResult:
     engine_version: str = ""
     all_paths: np.ndarray | None = field(default=None, repr=False)
 
+    terminal_inflation: np.ndarray | None = field(default=None, repr=False)
+    """Per-path cumulative inflation factor at the final step, shape ``(n_paths,)``.
+
+    Exposed so callers can deflate any nominal series the engine returns. Deflating the
+    published percentiles instead does not work: the factor varies by path, so the median
+    of the real values is not the median nominal divided by the median inflation."""
+
+    terminal_wealth_real_percentiles: dict[str, float] = field(default_factory=dict)
+    """Terminal wealth in today's dollars.
+
+    ``terminal_wealth_percentiles`` is **nominal** at ``end_age``, which over a multi-decade
+    horizon is a much larger number than the same wealth in present terms. Reporting only
+    the nominal figure invites it to be read as though it were real."""
+
 
 def simulate(
     plan: PlanConfig,
@@ -464,12 +478,24 @@ def simulate(
     success_mask = np.all(retirement_wealth > 0, axis=1)
     success_probability = float(success_mask.mean())
 
-    # Terminal wealth
+    # Terminal wealth, nominal at end_age
     terminal_wealth = wealth_history[:, -1]
     percentile_keys = [5, 25, 50, 75, 95]
     terminal_pcts = np.percentile(terminal_wealth, percentile_keys)
     terminal_wealth_percentiles = {
         f"p{p}": float(v) for p, v in zip(percentile_keys, terminal_pcts, strict=True)
+    }
+
+    # ...and in today's dollars. The deflator is per-path, so the ratio must be taken
+    # path by path before the percentiles rather than after: the median of a ratio is not
+    # the ratio of the medians. wealth_history[:, -1] is written at the end of step
+    # n_steps-1, by which point cumulative_inflation has had exactly n_steps updates, so
+    # the two are aligned.
+    terminal_inflation = state.cumulative_inflation.copy()
+    terminal_real = terminal_wealth / terminal_inflation
+    terminal_real_pcts = np.percentile(terminal_real, percentile_keys)
+    terminal_wealth_real_percentiles = {
+        f"p{p}": float(v) for p, v in zip(percentile_keys, terminal_real_pcts, strict=True)
     }
 
     # Wealth time series percentiles (for fan charts)
@@ -500,4 +526,6 @@ def simulate(
         config_hash=compute_config_hash(plan, market, policies, sim_config),
         engine_version=__version__,
         all_paths=wealth_history if sim_config.store_paths else None,
+        terminal_inflation=terminal_inflation,
+        terminal_wealth_real_percentiles=terminal_wealth_real_percentiles,
     )

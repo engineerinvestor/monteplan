@@ -67,9 +67,13 @@ def run(
     result = simulate(plan, market, policies, sim_config)
 
     click.echo(f"\nSuccess probability: {result.success_probability:.1%}")
-    click.echo("Terminal wealth percentiles:")
+    click.echo(f"Terminal wealth percentiles, nominal at age {plan.end_age}:")
     for key, val in sorted(result.terminal_wealth_percentiles.items()):
         click.echo(f"  {key}: ${val:,.0f}")
+    if result.terminal_wealth_real_percentiles:
+        click.echo("Terminal wealth percentiles, in today's dollars:")
+        for key, val in sorted(result.terminal_wealth_real_percentiles.items()):
+            click.echo(f"  {key}: ${val:,.0f}")
 
     if output_path is not None:
         results_json = dump_results_summary(
