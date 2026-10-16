@@ -1,6 +1,6 @@
 """monteplan — Monte Carlo financial planning simulator."""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 from monteplan.analytics.swr import SWRResult as SWRResult
 from monteplan.analytics.swr import find_safe_withdrawal_rate as find_safe_withdrawal_rate

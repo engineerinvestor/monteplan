@@ -98,10 +98,17 @@ for i in range(int(n_gi)):
                 "Start Age", value=existing_gi.start_age,
                 min_value=18.0, max_value=120.0, step=1.0, key=f"gi_start_{i}",
             )
+            gi_indexed = st.checkbox(
+                "Rises with inflation", value=existing_gi.cpi_indexed,
+                key=f"gi_indexed_{i}",
+                help="On for Social Security and CPI-linked pensions; off for a fixed "
+                "nominal pension (enter its amount at the start age).",
+            )
             gi_cola = st.number_input(
-                "COLA (%/yr)", value=existing_gi.cola_rate * 100,
+                "Extra COLA (%/yr)", value=existing_gi.cola_rate * 100,
                 min_value=0.0, max_value=10.0, step=0.5, key=f"gi_cola_{i}",
-                help="Annual cost-of-living adjustment (e.g. 2% for SS)",
+                help="Growth on top of the basis above: above inflation if indexed "
+                "(0 for Social Security), the nominal COLA if not.",
             ) / 100
         gi_has_end = st.checkbox(
             "Has end age", value=existing_gi.end_age is not None, key=f"gi_has_end_{i}",
@@ -114,7 +121,7 @@ for i in range(int(n_gi)):
             )
         gi_streams.append(GuaranteedIncomeStream(
             name=gi_name, monthly_amount=gi_amount, start_age=gi_start,
-            cola_rate=gi_cola, end_age=gi_end,
+            cpi_indexed=gi_indexed, cola_rate=gi_cola, end_age=gi_end,
         ))
 
 # Discrete Events

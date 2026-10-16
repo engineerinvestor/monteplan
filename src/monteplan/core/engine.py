@@ -205,12 +205,12 @@ def simulate(
             event_steps[ev_step] = event_steps.get(ev_step, 0.0) + ev.amount
 
     # Pre-compute guaranteed income streams (start/end steps and monthly amounts)
-    gi_streams: list[tuple[int, int, float, float]] = []
+    gi_streams: list[tuple[int, int, float, float, bool]] = []
     for gi in plan.guaranteed_income:
         gi_start = int(round((gi.start_age - plan.current_age) * 12))
         gi_end = int(round((gi.end_age - plan.current_age) * 12)) if gi.end_age else n_steps
         gi_monthly_cola = (1.0 + gi.cola_rate) ** (1.0 / 12.0) - 1.0
-        gi_streams.append((gi_start, gi_end, gi.monthly_amount, gi_monthly_cola))
+        gi_streams.append((gi_start, gi_end, gi.monthly_amount, gi_monthly_cola, gi.cpi_indexed))
 
     # Pre-compute Roth conversion window
     roth_cfg = policies.roth_conversion
@@ -323,11 +323,17 @@ def simulate(
             spending_history[:, t] = spending_need
 
             # Subtract guaranteed income streams from spending need
-            for gi_start, gi_end, gi_amount, gi_cola in gi_streams:
+            for gi_start, gi_end, gi_amount, gi_cola, gi_indexed in gi_streams:
                 if gi_start <= t < gi_end:
                     months_active = t - gi_start
                     cola_factor = (1.0 + gi_cola) ** months_active
-                    gi_nominal = gi_amount * cola_factor * state.cumulative_inflation
+                    # Indexed streams track simulated CPI from today; cola_factor is
+                    # then real growth on top. Non-indexed streams are fixed nominal
+                    # payments and grow only by their stated COLA.
+                    if gi_indexed:
+                        gi_nominal = gi_amount * cola_factor * state.cumulative_inflation
+                    else:
+                        gi_nominal = gi_amount * cola_factor
                     spending_need = np.maximum(spending_need - gi_nominal, 0.0)
 
             # Only withdraw for non-depleted paths

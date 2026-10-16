@@ -88,18 +88,22 @@ plan = PlanConfig(
             name="Social Security",
             monthly_amount=2_500,
             start_age=67,
-            cola_rate=0.02,      # 2% annual cost-of-living adjustment
+            cpi_indexed=True,    # Rises with simulated inflation (default)
+            cola_rate=0.0,       # No growth above inflation
             end_age=None,        # Lifetime (default)
         ),
         GuaranteedIncomeStream(
             name="Pension",
-            monthly_amount=1_500,
+            monthly_amount=1_500, # Nominal dollars at start_age
             start_age=65,
-            cola_rate=0.0,       # No COLA
+            cpi_indexed=False,   # Fixed nominal payment
+            cola_rate=0.0,       # Nominal COLA; 0 = flat
         ),
     ],
 )
 ```
+
+`cola_rate` is measured against the indexing basis. For an indexed stream it is growth *above* inflation, so Social Security takes `cola_rate=0.0`: setting it to the expected COLA (say 2%) would count inflation twice. For a non-indexed stream it is the nominal COLA written into the contract.
 
 Guaranteed income offsets the amount that must be withdrawn from the portfolio, significantly improving success rates for retirees with Social Security or pensions.
 

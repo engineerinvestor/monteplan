@@ -83,13 +83,32 @@ class GuaranteedIncomeStream(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Stream name (e.g. 'Social Security', 'Pension')")
-    monthly_amount: float = Field(gt=0, description="Monthly benefit in today's dollars")
+    monthly_amount: float = Field(
+        gt=0,
+        description=(
+            "Monthly benefit. In today's dollars when cpi_indexed is True; in nominal "
+            "dollars at start_age when cpi_indexed is False (the figure a pension "
+            "statement quotes)."
+        ),
+    )
     start_age: float = Field(ge=18, le=120, description="Age when payments begin")
+    cpi_indexed: bool = Field(
+        default=True,
+        description=(
+            "True: the benefit rises with simulated inflation, as Social Security does "
+            "(cola_rate=0 keeps it constant in real terms). False: the benefit is fixed "
+            "in nominal dollars and grows only by cola_rate, as most private pensions do."
+        ),
+    )
     cola_rate: float = Field(
         default=0.0,
         ge=0,
         le=0.10,
-        description="Annual cost-of-living adjustment rate (0 = no COLA)",
+        description=(
+            "Annual growth on top of the indexing basis. With cpi_indexed=True this is "
+            "real growth above inflation (0 for Social Security). With cpi_indexed=False "
+            "it is the nominal COLA (0 = flat nominal payment)."
+        ),
     )
     end_age: float | None = Field(
         default=None,

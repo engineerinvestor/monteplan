@@ -226,7 +226,7 @@ def conservative_retiree_plan() -> PlanConfig:
                 name="Social Security",
                 monthly_amount=2_500,
                 start_age=67,
-                cola_rate=0.02,
+                cola_rate=0.0,
             ),
         ],
     )
