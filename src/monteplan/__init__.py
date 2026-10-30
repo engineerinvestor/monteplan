@@ -1,6 +1,6 @@
 """monteplan — Monte Carlo financial planning simulator."""
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 from monteplan.analytics.swr import SWRResult as SWRResult
 from monteplan.analytics.swr import find_safe_withdrawal_rate as find_safe_withdrawal_rate
@@ -21,6 +21,7 @@ from monteplan.config.schema import PlanConfig as PlanConfig
 from monteplan.config.schema import PolicyBundle as PolicyBundle
 from monteplan.config.schema import RothConversionConfig as RothConversionConfig
 from monteplan.config.schema import SimulationConfig as SimulationConfig
+from monteplan.config.schema import SpendingChange as SpendingChange
 from monteplan.config.schema import SpendingPolicyConfig as SpendingPolicyConfig
 from monteplan.core.engine import SimulationResult as SimulationResult
 from monteplan.core.engine import simulate as simulate

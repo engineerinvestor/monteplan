@@ -206,6 +206,12 @@ def simulate(
         if 0 <= ev_step < n_steps:
             event_steps[ev_step] = event_steps.get(ev_step, 0.0) + ev.amount
 
+    # Pre-compute spending steps: (start step, multiplier), applied from that step on
+    spending_steps: list[tuple[int, float]] = [
+        (int(round((sc.age - plan.current_age) * 12)), sc.multiplier)
+        for sc in plan.spending_changes
+    ]
+
     # Pre-compute guaranteed income streams (start/end steps and monthly amounts)
     gi_streams: list[tuple[int, int, float, float, bool]] = []
     for gi in plan.guaranteed_income:
@@ -320,6 +326,9 @@ def simulate(
         # 6. Retirement phase: compute spending, withdraw, apply taxes
         if timeline.is_retired(t):
             spending_need = spending_policy.compute(state)
+            for step_start, multiplier in spending_steps:
+                if t >= step_start:
+                    spending_need = spending_need * multiplier
 
             # Record total spending (before GI offset, for time series)
             spending_history[:, t] = spending_need

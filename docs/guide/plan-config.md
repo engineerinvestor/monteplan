@@ -107,6 +107,21 @@ plan = PlanConfig(
 
 Guaranteed income offsets the amount that must be withdrawn from the portfolio, significantly improving success rates for retirees with Social Security or pensions.
 
+## Spending Changes
+
+`spending_changes` scales retirement spending from an age onward. Each entry multiplies whatever the spending policy computes, so it works with every policy. Steps compound.
+
+```python
+from monteplan.config.schema import SpendingChange
+
+plan = PlanConfig(
+    # ...
+    spending_changes=[
+        SpendingChange(age=80, multiplier=0.75),  # one spouse dies; the survivor spends less
+    ],
+)
+```
+
 ## Quick-Start Templates
 
 Use the built-in templates as starting points:

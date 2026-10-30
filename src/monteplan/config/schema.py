@@ -128,6 +128,22 @@ class DiscreteEvent(BaseModel):
     description: str = Field(default="", description="Description of the event")
 
 
+class SpendingChange(BaseModel):
+    """Scale retirement spending from an age onward (e.g. 0.75 after a spouse dies)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    age: float = Field(ge=18, le=120, description="Age when the change takes effect")
+    multiplier: float = Field(
+        ge=0,
+        le=2,
+        description=(
+            "Factor applied to the spending policy's amount from this age on. Changes "
+            "compound: two steps of 0.9 leave 0.81."
+        ),
+    )
+
+
 class AccountConfig(BaseModel):
     """A single investment account."""
 
@@ -167,6 +183,10 @@ class PlanConfig(BaseModel):
     guaranteed_income: list[GuaranteedIncomeStream] = Field(
         default_factory=list,
         description="Recurring income streams (Social Security, pensions, annuities)",
+    )
+    spending_changes: list[SpendingChange] = Field(
+        default_factory=list,
+        description="Step changes to retirement spending by age (e.g. after a death)",
     )
 
     @model_validator(mode="after")
