@@ -99,9 +99,7 @@ def test_real_percentiles_are_not_recoverable_from_nominal() -> None:
     medians when the denominator varies across paths.
     """
     result = _run(n_paths=2000)
-    naive = result.terminal_wealth_percentiles["p50"] / float(
-        np.median(result.terminal_inflation)
-    )
+    naive = result.terminal_wealth_percentiles["p50"] / float(np.median(result.terminal_inflation))
     exact = result.terminal_wealth_real_percentiles["p50"]
     assert exact != pytest.approx(naive, rel=1e-6)
 

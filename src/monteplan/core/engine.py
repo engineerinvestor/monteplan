@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 
 from monteplan import __version__
 from monteplan.config.schema import (
@@ -330,6 +332,7 @@ def simulate(
                     # Indexed streams track simulated CPI from today; cola_factor is
                     # then real growth on top. Non-indexed streams are fixed nominal
                     # payments and grow only by their stated COLA.
+                    gi_nominal: npt.NDArray[np.floating[Any]] | float
                     if gi_indexed:
                         gi_nominal = gi_amount * cola_factor * state.cumulative_inflation
                     else:
